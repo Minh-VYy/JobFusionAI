@@ -1,0 +1,12 @@
+
+playwright
+beautifulsoup4
+pandas
+pyodbc
+sqlalchemy
+lxml
+fake-useragent
+python-dotenv
+geopy
+schedule
+requests

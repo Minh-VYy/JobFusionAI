@@ -1,0 +1,431 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>AI Job Agent — Tìm việc Đà Nẵng</title>
+  <meta name="description" content="Hệ thống AI Agent tự vận hành tìm kiếm việc làm theo vị trí địa lý tại Đà Nẵng" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <link rel="stylesheet" href="/static/style.css" />
+</head>
+<body>
+
+<!-- ═══════════════════════════════════════════════
+     SIDEBAR NAVIGATION
+════════════════════════════════════════════════ -->
+<aside class="sidebar" id="sidebar">
+  <div class="sidebar-logo">
+    <div class="logo-icon">
+      <svg viewBox="0 0 40 40" fill="none" xmlns="http://www.w3.org/2000/svg">
+        <circle cx="20" cy="20" r="18" stroke="url(#logoGrad)" stroke-width="2.5"/>
+        <path d="M12 20C12 15.5817 15.5817 12 20 12C24.4183 12 28 15.5817 28 20" stroke="url(#logoGrad)" stroke-width="2.5" stroke-linecap="round"/>
+        <circle cx="20" cy="24" r="3" fill="url(#logoGrad)"/>
+        <defs>
+          <linearGradient id="logoGrad" x1="8" y1="8" x2="32" y2="32" gradientUnits="userSpaceOnUse">
+            <stop stop-color="#6366f1"/>
+            <stop offset="1" stop-color="#06b6d4"/>
+          </linearGradient>
+        </defs>
+      </svg>
+    </div>
+    <div class="logo-text">
+      <span class="logo-main">JobAgent</span>
+      <span class="logo-sub">Đà Nẵng</span>
+    </div>
+  </div>
+
+  <nav class="sidebar-nav">
+    <!-- Public Pages Only -->
+    <div class="nav-section">
+      <span class="nav-section-title">Khám Phá Việc Làm</span>
+      <button class="nav-item active" onclick="showPage('landing')" id="nav-landing">
+        <span class="nav-icon">✨</span><span>Trang Chủ</span>
+      </button>
+      <button class="nav-item" onclick="showPage('map')" id="nav-map">
+        <span class="nav-icon">🗺️</span><span>Bản Đồ Việc Làm</span>
+      </button>
+      <button class="nav-item" onclick="showPage('search')" id="nav-search">
+        <span class="nav-icon">🔍</span><span>Tìm Kiếm Nâng Cao</span>
+      </button>
+      <button class="nav-item" onclick="showPage('graph')" id="nav-graph">
+        <span class="nav-icon">🕸️</span><span>Kỹ Năng Hot</span>
+      </button>
+    </div>
+  </nav>
+
+  <!-- Auth Section -->
+  <div class="sidebar-auth" id="sidebar-auth">
+    <div class="auth-guest" id="auth-guest">
+      <p class="auth-text">Đăng nhập để lưu tìm kiếm & nhận thông báo việc làm mới</p>
+      <button class="btn btn-primary btn-full" onclick="openLoginModal()">
+        <span>🔐</span> Đăng Nhập
+      </button>
+    </div>
+    <div class="auth-user" id="auth-user" style="display:none">
+      <div class="user-info">
+        <div class="user-avatar">👤</div>
+        <div class="user-details">
+          <span class="user-name" id="user-name">User</span>
+          <span class="user-role" id="user-role">Member</span>
+        </div>
+      </div>
+      <button class="btn btn-outline btn-sm btn-full" onclick="logout()">Đăng Xuất</button>
+    </div>
+  </div>
+
+  <div class="sidebar-status">
+    <div class="status-dot" id="ws-dot"></div>
+    <span id="ws-status">Đang kết nối...</span>
+  </div>
+</aside>
+
+<!-- ═══════════════════════════════════════════════
+     MAIN CONTENT
+════════════════════════════════════════════════ -->
+<main class="main-content">
+
+  <!-- ══════════════════════════════════════════════
+       PAGE: LANDING (Public Homepage)
+  ══════════════════════════════════════════════ -->
+  <div class="page active" id="page-landing">
+    <div class="landing-hero">
+      <div class="hero-content">
+        <div class="hero-badge">
+          <span class="pulse-dot"></span> AI-Powered Job Discovery
+        </div>
+        <h1 class="hero-title">
+          Tìm việc làm tại <span class="gradient-text">Đà Nẵng</span><br/>thông minh hơn
+        </h1>
+        <p class="hero-desc">
+          Hệ thống AI Agent tự vận hành, cập nhật việc làm real-time từ VietnamWorks, TopCV, ITviec. 
+          Tìm kiếm theo vị trí địa lý, kỹ năng và mức lương mong muốn.
+        </p>
+        <div class="hero-stats">
+          <div class="hero-stat">
+            <span class="stat-num" id="hero-job-count">1,200+</span>
+            <span class="stat-label">Việc làm</span>
+          </div>
+          <div class="hero-stat">
+            <span class="stat-num">50+</span>
+            <span class="stat-label">Công ty</span>
+          </div>
+          <div class="hero-stat">
+            <span class="stat-num">3</span>
+            <span class="stat-label">Nguồn tuyển dụng</span>
+          </div>
+        </div>
+        <div class="hero-cta">
+          <button class="btn btn-primary btn-lg" onclick="showPage('map')">
+            <span>🗺️</span> Xem Bản Đồ Việc Làm
+          </button>
+          <button class="btn btn-outline btn-lg" onclick="showPage('search')">
+            <span>🔍</span> Tìm Kiếm Nâng Cao
+          </button>
+        </div>
+      </div>
+      <div class="hero-visual">
+        <div class="floating-card card-1">
+          <div class="card-icon">💼</div>
+          <div class="card-info">
+            <span class="card-title">Frontend Developer</span>
+            <span class="card-meta">FPT Software • 2km</span>
+          </div>
+        </div>
+        <div class="floating-card card-2">
+          <div class="card-icon">🐍</div>
+          <div class="card-info">
+            <span class="card-title">Python Engineer</span>
+            <span class="card-meta">20-25 triệu</span>
+          </div>
+        </div>
+        <div class="floating-card card-3">
+          <div class="card-icon">☁️</div>
+          <div class="card-info">
+            <span class="card-title">DevOps</span>
+            <span class="card-meta">AWS, Docker, K8s</span>
+          </div>
+        </div>
+        <div class="hero-map-preview">
+          <div class="map-pin pin-1"></div>
+          <div class="map-pin pin-2"></div>
+          <div class="map-pin pin-3"></div>
+          <div class="map-pin pin-4"></div>
+          <div class="map-pin pin-5"></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="landing-features">
+      <div class="feature-card">
+        <div class="feature-icon">🗺️</div>
+        <h3>Bản Đồ Tương Tác</h3>
+        <p>Xem vị trí công ty trên bản đồ, tính khoảng cách từ nhà bạn đến nơi làm việc</p>
+      </div>
+      <div class="feature-card">
+        <div class="feature-icon">🧠</div>
+        <h3>Tìm Kiếm Ngữ Nghĩa</h3>
+        <p>AI hiểu ý định tìm kiếm của bạn, gợi ý việc làm phù hợp ngay cả khi từ khóa khác</p>
+      </div>
+      <div class="feature-card">
+        <div class="feature-icon">🕸️</div>
+        <h3>Knowledge Graph</h3>
+        <p>Khám phá các kỹ năng liên quan, xu hướng công nghệ đang hot tại Đà Nẵng</p>
+      </div>
+      <div class="feature-card">
+        <div class="feature-icon">🔔</div>
+        <h3>Thông Báo Real-time</h3>
+        <p>Nhận thông báo khi có việc làm mới phù hợp với tiêu chí của bạn</p>
+      </div>
+    </div>
+
+    <div class="landing-sources">
+      <h3>Đối tác tuyển dụng</h3>
+      <div class="sources-logos">
+        <div class="source-logo">VietnamWorks</div>
+        <div class="source-logo">TopCV</div>
+        <div class="source-logo">ITviec</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ══════════════════════════════════════════════
+       PAGE: BẢN ĐỒ VIỆC LÀM
+  ══════════════════════════════════════════════ -->
+  <div class="page" id="page-map">
+    <div class="page-header">
+      <div>
+        <h1 class="page-title">🗺️ Bản Đồ Việc Làm</h1>
+        <p class="page-desc">Hiển thị việc làm theo vị trí địa lý tại Đà Nẵng</p>
+      </div>
+      <div class="header-actions">
+        <div class="radius-control">
+          <label>Bán kính:</label>
+          <input type="range" id="radius-slider" min="1" max="20" value="5"
+                 oninput="updateRadius(this.value)" />
+          <span id="radius-display">5 km</span>
+        </div>
+        <button class="btn btn-outline" onclick="getUserLocation()">📍 Vị Trí Của Tôi</button>
+        <button class="btn btn-primary" onclick="loadMapData()">🔄 Tải Dữ Liệu</button>
+      </div>
+    </div>
+
+    <div class="map-layout">
+      <div class="map-container">
+        <div id="map"></div>
+        <div class="map-legend glass-card">
+          <h4>Chú thích</h4>
+          <div class="legend-item"><span class="dot dot-vw"></span> VietnamWorks</div>
+          <div class="legend-item"><span class="dot dot-tc"></span> TopCV</div>
+          <div class="legend-item"><span class="dot dot-it"></span> ITviec</div>
+        </div>
+        <div class="map-stats glass-card" id="map-stats">
+          <span id="map-count">0 việc làm</span> trong bán kính <span id="map-radius">5km</span>
+        </div>
+      </div>
+
+      <div class="map-sidebar">
+        <div class="search-mini glass-card">
+          <h3>Bộ Lọc Nhanh</h3>
+          <input type="text" id="map-keyword" placeholder="Từ khóa: Python, React..." class="input-field" />
+          <select id="map-source" class="input-field">
+            <option value="">Tất cả nguồn</option>
+            <option value="vietnamworks">VietnamWorks</option>
+            <option value="topcv">TopCV</option>
+            <option value="itviec">ITviec</option>
+          </select>
+          <button class="btn btn-primary btn-full" onclick="filterMapJobs()">Lọc</button>
+        </div>
+
+        <div class="job-cards-list" id="map-job-list">
+          <div class="empty-state">
+            <div class="empty-icon">📍</div>
+            <p>Nhấn "Tải Dữ Liệu" để xem việc làm trên bản đồ</p>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ══════════════════════════════════════════════
+       PAGE: TÌM KIẾM
+  ══════════════════════════════════════════════ -->
+  <div class="page" id="page-search">
+    <div class="page-header">
+      <div>
+        <h1 class="page-title">🔍 Tìm Kiếm Việc Làm</h1>
+        <p class="page-desc">Tìm kiếm ngữ nghĩa AI + Lọc theo vị trí địa lý</p>
+      </div>
+    </div>
+
+    <div class="search-layout">
+      <div class="search-filters glass-card">
+        <h3>Bộ Lọc Tìm Kiếm</h3>
+        
+        <div class="form-group">
+          <label>🔍 Từ khóa / Mô tả CV</label>
+          <textarea id="search-query" placeholder="Nhập từ khóa, kỹ năng hoặc dán nội dung CV..." rows="3" class="input-field"></textarea>
+        </div>
+
+        <div class="form-group">
+          <label>🛠️ Kỹ năng yêu cầu</label>
+          <input type="text" id="search-skills" placeholder="Python, React, Docker..." class="input-field" />
+        </div>
+
+        <div class="form-group">
+          <label>📍 Vị trí của bạn</label>
+          <div class="location-input">
+            <input type="number" id="search-lat" placeholder="Vĩ độ" step="0.0001" class="input-field" />
+            <input type="number" id="search-lng" placeholder="Kinh độ" step="0.0001" class="input-field" />
+          </div>
+          <button class="btn btn-outline btn-sm" onclick="fillUserLocation()">📍 Dùng vị trí hiện tại</button>
+        </div>
+
+        <div class="form-group">
+          <label>📏 Bán kính tìm kiếm: <span id="search-radius-display">5 km</span></label>
+          <input type="range" id="search-radius" min="1" max="30" value="5" class="range-input"
+                 oninput="document.getElementById('search-radius-display').textContent = this.value + ' km'" />
+        </div>
+
+        <div class="form-group">
+          <label>💰 Mức lương tối thiểu (triệu VND)</label>
+          <input type="number" id="search-salary" placeholder="VD: 10" class="input-field" />
+        </div>
+
+        <div class="form-group">
+          <label>
+            <input type="checkbox" id="search-semantic" />
+            🧠 Tìm kiếm ngữ nghĩa AI (Semantic Search)
+          </label>
+        </div>
+
+        <button class="btn btn-primary btn-full" onclick="searchJobs()">
+          🚀 Tìm Kiếm
+        </button>
+      </div>
+
+      <div class="search-results">
+        <div class="results-header" id="search-results-header" style="display:none">
+          <span id="search-count">0 kết quả</span>
+          <select onchange="sortResults(this.value)" class="input-field sort-select">
+            <option value="distance">Khoảng cách</option>
+            <option value="salary">Mức lương</option>
+            <option value="date">Mới nhất</option>
+          </select>
+        </div>
+        <div id="search-results-list">
+          <div class="empty-state">
+            <div class="empty-icon">🔍</div>
+            <p>Nhập từ khóa và nhấn tìm kiếm</p>
+          </div>
+        </div>
+        <div class="pagination" id="search-pagination"></div>
+      </div>
+    </div>
+  </div>
+
+
+  <!-- ══════════════════════════════════════════════
+       PAGE: KNOWLEDGE GRAPH
+  ══════════════════════════════════════════════ -->
+  <div class="page" id="page-graph">
+    <div class="page-header">
+      <div>
+        <h1 class="page-title">🕸️ Knowledge Graph</h1>
+        <p class="page-desc">Đồ thị quan hệ giữa các kỹ năng công nghệ</p>
+      </div>
+      <div class="skill-search">
+        <input type="text" id="skill-search-input" placeholder="Tìm kỹ năng..." class="input-field" />
+        <button class="btn btn-primary" onclick="searchSkill()">Tìm</button>
+      </div>
+    </div>
+
+    <div class="graph-layout">
+      <div class="glass-card graph-container">
+        <canvas id="graph-canvas"></canvas>
+        <div class="graph-placeholder" id="graph-placeholder">
+          <div class="empty-icon">🕸️</div>
+          <p>Đang tải Knowledge Graph...</p>
+          <button class="btn btn-primary" onclick="loadKnowledgeGraph()">Tải Graph</button>
+        </div>
+      </div>
+
+      <div class="glass-card graph-detail" id="graph-detail">
+        <h3>Chi Tiết Kỹ Năng</h3>
+        <div id="skill-detail-content">
+          <p style="color:var(--text-muted)">Chọn một kỹ năng để xem quan hệ</p>
+        </div>
+      </div>
+    </div>
+  </div>
+
+
+</main>
+
+<!-- ═══════════════════════════════════════════════
+     MODALS
+════════════════════════════════════════════════ -->
+<!-- Job Detail Modal -->
+<div class="modal-overlay" id="job-detail-modal" onclick="if(event.target===this)closeModal('job-detail-modal')">
+  <div class="modal glass-card modal-large">
+    <div class="modal-header">
+      <h2 id="detail-title">Chi Tiết Việc Làm</h2>
+      <button onclick="closeModal('job-detail-modal')" class="modal-close">✕</button>
+    </div>
+    <div id="job-detail-content" class="job-detail-body"></div>
+  </div>
+</div>
+
+<!-- Login Modal -->
+<div class="modal-overlay" id="login-modal" onclick="if(event.target===this)closeModal('login-modal')">
+  <div class="modal glass-card modal-auth">
+    <div class="modal-header">
+      <div class="auth-modal-brand">
+        <div class="auth-logo-sm">
+          <svg viewBox="0 0 40 40" fill="none" xmlns="http://www.w3.org/2000/svg">
+            <circle cx="20" cy="20" r="18" stroke="url(#logoGradSm)" stroke-width="2.5"/>
+            <path d="M12 20C12 15.5817 15.5817 12 20 12C24.4183 12 28 15.5817 28 20" stroke="url(#logoGradSm)" stroke-width="2.5" stroke-linecap="round"/>
+            <circle cx="20" cy="24" r="3" fill="url(#logoGradSm)"/>
+            <defs>
+              <linearGradient id="logoGradSm" x1="8" y1="8" x2="32" y2="32" gradientUnits="userSpaceOnUse">
+                <stop stop-color="#6366f1"/>
+                <stop offset="1" stop-color="#06b6d4"/>
+              </linearGradient>
+            </defs>
+          </svg>
+        </div>
+        <div>
+          <h2>Đăng Nhập</h2>
+          <p>Truy cập tính năng nâng cao</p>
+        </div>
+      </div>
+      <button onclick="closeModal('login-modal')" class="modal-close">✕</button>
+    </div>
+    <form onsubmit="login(event)" class="modal-form">
+      <div class="form-group">
+        <label>Tên đăng nhập</label>
+        <input type="text" id="username" placeholder="admin" class="input-field" required />
+      </div>
+      <div class="form-group">
+        <label>Mật khẩu</label>
+        <input type="password" id="password" placeholder="••••••••" class="input-field" required />
+      </div>
+      <div class="login-hint">
+        <p>👤 <strong>Khách:</strong> xem việc làm không cần đăng nhập</p>
+        <p>🔐 <strong>Admin:</strong> admin / admin123</p>
+      </div>
+      <button type="submit" class="btn btn-primary btn-full">
+        🚀 Đăng Nhập
+      </button>
+    </form>
+  </div>
+</div>
+
+<!-- Toast Notification -->
+<div id="toast" class="toast"></div>
+
+<script src="/static/app.js"></script>
+</body>
+</html>
