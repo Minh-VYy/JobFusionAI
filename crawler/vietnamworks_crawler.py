@@ -135,41 +135,61 @@ class VietnamWorksCrawler(BaseCrawler):
             self.page.goto(job.job_url, wait_until="domcontentloaded", timeout=30000)
             self.human_sleep(1, 2)
 
+            # --- Mở rộng dữ liệu ẩn ---
+            try:
+                # Tìm tất cả các nút Xem thêm, Xem đầy đủ...
+                buttons = self.page.locator("text=/Xem đầy đủ|Xem thêm/i").all()
+                for btn in buttons:
+                    if btn.is_visible():
+                        btn.click(timeout=2000)
+                        self.page.wait_for_timeout(500)
+            except Exception as e:
+                logger.debug(f"Không thể click mở rộng nội dung: {e}")
+
             detail_html = self.get_html()
             soup = BeautifulSoup(detail_html, "lxml")
 
             # --- Description & Requirements ---
-            # Dò tìm cấu trúc heading chuẩn xác của VietnamWorks
-            desc_text = ""
-            req_text = ""
-            
-            for section_title in ["Mô tả công việc", "Các phúc lợi dành cho bạn", "Job Description", "Benefits"]:
-                el = soup.find(string=re.compile(f"^{section_title}$", re.IGNORECASE))
-                if el:
-                    parent = el.find_parent(["h2", "h3", "div", "strong"])
-                    if parent:
-                        sib = parent.find_next_sibling(["div", "ul", "section"])
-                        if sib:
-                            desc_text += f"\n--- {section_title} ---\n" + sib.get_text(separator="\n", strip=True) + "\n"
+            def extract_section_content(heading_regex, stop_regex=r"Yêu cầu công|Phúc lợi|Địa điểm|Từ khoá|Kỹ năng"):
+                heading = soup.find(string=re.compile(heading_regex, re.IGNORECASE))
+                if not heading: return ""
+                
+                # Leo lên DOM để tìm container chứa nội dung (có sibling)
+                parent = heading.parent
+                curr = None
+                while parent and parent.name not in ['body', 'html', 'main']:
+                    sib = parent.find_next_sibling()
+                    if sib:
+                        curr = sib
+                        break
+                    parent = parent.parent
+                
+                if not curr: return ""
+                
+                content = []
+                # Duyệt các thẻ anh em cho đến khi gặp heading khác
+                while curr:
+                    text_preview = curr.get_text(strip=True)[:50]
+                    if curr.name in ['h2', 'h3', 'h4'] or re.search(stop_regex, text_preview, re.IGNORECASE):
+                        break
+                    
+                    text = curr.get_text(separator="\n", strip=True)
+                    # Bỏ qua các đoạn text rác như "Mức độ phù hợp..."
+                    if text and "Mức độ phù hợp" not in text:
+                        content.append(text)
+                    curr = curr.find_next_sibling()
+                
+                return "\n".join(content).strip()
 
-            for section_title in ["Yêu cầu công việc", "Job Requirements", "Requirements"]:
-                el = soup.find(string=re.compile(f"^{section_title}$", re.IGNORECASE))
-                if el:
-                    parent = el.find_parent(["h2", "h3", "div", "strong"])
-                    if parent:
-                        sib = parent.find_next_sibling(["div", "ul", "section"])
-                        if sib:
-                            req_text += f"\n--- {section_title} ---\n" + sib.get_text(separator="\n", strip=True) + "\n"
-            
-            if desc_text: job.description = desc_text.strip()
-            if req_text: job.requirements = req_text.strip()
+            job.description = extract_section_content(r"Mô tả công việc|Job Description")
+            job.requirements = extract_section_content(r"Yêu cầu công việc|Job Requirements|Requirements")
 
             # Fallback
             if not job.description:
-                desc_el = soup.select_one("div[class*='description'], div[class*='job-description']")
+                desc_el = soup.select_one(".job-description, .description")
                 if desc_el: job.description = desc_el.get_text(separator="\n", strip=True)
             if not job.requirements:
-                req_el = soup.select_one("div[class*='requirement']")
+                req_el = soup.select_one(".job-requirements, .requirements")
                 if req_el: job.requirements = req_el.get_text(separator="\n", strip=True)
 
             # --- Trích xuất từ bảng "Thông tin việc làm" ---
@@ -204,17 +224,11 @@ class VietnamWorksCrawler(BaseCrawler):
                         job.skills.append(st)
 
             # --- Địa điểm làm việc (Location) ---
-            loc_label = soup.find(string=re.compile(r"Địa điểm làm việc|Địa điểm|Location|Work location", re.IGNORECASE))
-            if loc_label:
-                parent = loc_label.find_parent(["div", "h3", "h2", "strong"])
-                if parent:
-                    loc_container = parent.find_next_sibling("div") or parent.parent
-                    if loc_container:
-                        loc_text = loc_container.get_text(separator=", ", strip=True)
-                        if loc_text and len(loc_text) > 5 and len(loc_text) < 500 and "location" not in loc_text.lower():
-                            job.location = re.sub(r"^\-\s*", "", loc_text.strip())
+            loc_text = extract_section_content(r"Địa điểm làm việc|Địa điểm|Location|Work location", r"Từ khoá|Keywords")
+            if loc_text and len(loc_text) > 5:
+                job.location = re.sub(r"[\n\r]+", ", ", loc_text).strip()
 
-            # Fallback cho Location dùng CSS Selector nếu label không ăn
+            # Fallback cho Location dùng CSS Selector nếu hàm trên không ăn
             if not job.location or "₫" in job.location or "tr/tháng" in job.location or "tất cả" in job.location.lower():
                 loc_el = soup.select_one(".company-location, .job-location, .location, .address")
                 if loc_el:
