@@ -78,23 +78,14 @@ class FacebookDB:
     # ============================================================
 
     def insert_facebook_job(self, job_data: dict) -> bool:
+        """Insert job Facebook bằng câu SQL atomic (tránh race condition)."""
         cursor = self.conn.cursor()
 
-        # Kiểm tra tồn tại trước
         job_url = job_data.get("job_url", "")[:1000]
         post_id = job_data.get("post_id", "")[:200]
+        fp_hash = job_data.get("fingerprint_hash", "")[:64]
 
-        cursor.execute("""
-            SELECT COUNT(*) FROM jobs
-            WHERE source_url = ?
-            OR (external_id = ? AND source_name = 'facebook')
-        """, (job_url, post_id))
-
-        exists = cursor.fetchone()[0] > 0
-        if exists:
-            return False  # Đã tồn tại
-
-        # Insert mới
+        # Atomic INSERT ... WHERE NOT EXISTS (ngăn race condition)
         cursor.execute("""
             INSERT INTO jobs (
                 title, company, description,
@@ -106,7 +97,8 @@ class FacebookDB:
                 salary_min, salary_max, phone,
                 fingerprint_hash, source_type,
                 scraped_at
-            ) VALUES (
+            )
+            SELECT
                 ?, ?, ?,
                 ?, ?, ?,
                 ?, ?, 'facebook',
@@ -116,32 +108,37 @@ class FacebookDB:
                 ?, ?, ?,
                 ?, 'facebook',
                 GETUTCDATE()
+            WHERE NOT EXISTS (
+                SELECT 1 FROM jobs
+                WHERE source_url = ?
+                   OR (external_id = ? AND source_name = 'facebook')
+                   OR (fingerprint_hash = ? AND fingerprint_hash != '')
             )
         """, (
             job_data.get("title", "")[:500],
             job_data.get("company", "")[:300],
             job_data.get("description", ""),
-
             job_data.get("salary", "")[:200],
             job_data.get("location", "")[:500],
             job_data.get("location", "")[:500],
-
             job_data.get("skills", "")[:1000],
             job_url,
-
             post_id,
-
-            # Normalized fields
             job_data.get("normalized_title", "")[:500],
             job_data.get("normalized_location", "")[:300],
             job_data.get("salary_min", None),
             job_data.get("salary_max", None),
             job_data.get("phone", "")[:50],
-            job_data.get("fingerprint_hash", "")[:64],
+            fp_hash,
+            # WHERE NOT EXISTS params
+            job_url,
+            post_id,
+            fp_hash,
         ))
 
         self.conn.commit()
-        return True
+        return cursor.rowcount > 0
+
     
     # ============================================================
     # GROUP TRUST SCORE

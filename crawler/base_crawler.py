@@ -42,9 +42,11 @@ class BaseCrawler:
     - Context manager support
     """
 
-    def __init__(self, headless: bool = True, max_pages: int = 5):
+    def __init__(self, headless: bool = True, max_pages: int = 5, use_cdp: bool = True, cdp_url: str = "http://localhost:9222"):
         self.headless = headless
         self.max_pages = max_pages
+        self.use_cdp = use_cdp
+        self.cdp_url = cdp_url
         self.playwright = None
         self.browser: Browser = None
         self.context: BrowserContext = None
@@ -56,9 +58,25 @@ class BaseCrawler:
 
     def start(self):
         """Khởi động Playwright + stealth browser context"""
-        logger.info("🚀 Khởi động browser (stealth mode)...")
+        logger.info("🚀 Khởi động browser...")
         self.playwright = sync_playwright().start()
 
+        if self.use_cdp:
+            try:
+                logger.info(f"🔗 Đang thử kết nối CDP: {self.cdp_url}...")
+                self.browser = self.playwright.chromium.connect_over_cdp(self.cdp_url)
+                self.context = self.browser.contexts[0]
+                
+                # LUÔN TẠO TAB MỚI ĐỂ TRÁNH ĐÈ LÊN BOT KHÁC
+                logger.info("Mở tab mới trên trình duyệt hiện tại...")
+                self.page = self.context.new_page()
+                
+                logger.info("✅ Đã kết nối thành công tới trình duyệt có sẵn (Tab mới)!")
+                return
+            except Exception as e:
+                logger.warning(f"⚠️ Không kết nối được trình duyệt thật ({e}). Mở trình duyệt ảo...")
+
+        logger.info("🚀 Khởi động trình duyệt ảo (stealth mode)...")
         self.browser = self.playwright.chromium.launch(
             headless=self.headless,
             args=[
@@ -97,17 +115,30 @@ class BaseCrawler:
         self.page = self.context.new_page()
         self._inject_stealth_scripts()
 
-        logger.info(f"✅ Browser sẵn sàng | UA: {ua[:60]}... | VP: {vp['width']}x{vp['height']}")
+        logger.info(f"✅ Browser ảo sẵn sàng | UA: {ua[:60]}... | VP: {vp['width']}x{vp['height']}")
 
     def stop(self):
-        """Đóng browser, giải phóng memory"""
-        if self.context:
-            self.context.close()
-        if self.browser:
-            self.browser.close()
+        """Đóng/Ngắt kết nối browser, giải phóng memory"""
+        # Luôn đóng tab hiện tại để tránh lưu rác/nhiều tab mở
+        if getattr(self, 'page', None) and not self.page.is_closed():
+            try:
+                self.page.close()
+                logger.info("🛑 Đã đóng tab của crawler hiện tại")
+            except:
+                pass
+
+        if getattr(self, 'use_cdp', False) and hasattr(self, 'browser') and self.browser and self.browser.is_connected():
+            logger.info("🛑 Ngắt kết nối khỏi trình duyệt thật...")
+            self.browser.close() # Ngắt kết nối CDP, không đóng browser
+        else:
+            if self.context:
+                self.context.close()
+            if self.browser:
+                self.browser.close()
+        
         if self.playwright:
             self.playwright.stop()
-        logger.info("🛑 Browser đã đóng")
+        logger.info("🛑 Playwright cleanup hoàn tất")
 
     def __enter__(self):
         self.start()
@@ -275,6 +306,44 @@ class BaseCrawler:
         """Scroll xuống cuối trang nhanh (dùng cho trang phân trang cứng)"""
         self.page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
         self.human_sleep(1.0, 2.5)
+
+    # ================================================================
+    # INCREMENTAL CRAWLING — Bỏ qua URLs đã crawl gần đây
+    # ================================================================
+
+    def _filter_new_urls(
+        self,
+        urls: list,
+        source_name: str,
+        max_age_days: int = 7,
+    ) -> list:
+        """
+        Lọc bỏ URLs đã crawl gần đây (< max_age_days ngày).
+        URLs cũ hơn max_age_days → cho phép crawl lại (dữ liệu có thể stale).
+        Nếu DB lỗi → fallback crawl tất cả.
+        """
+        if not urls:
+            return []
+        try:
+            from database.db_handler import DBHandler
+            with DBHandler() as db:
+                known_urls = db.get_crawled_urls(
+                    source_name=source_name,
+                    max_age_days=max_age_days,
+                )
+            new_urls = [u for u in urls if u not in known_urls]
+            skipped  = len(urls) - len(new_urls)
+            if skipped:
+                logger.info(
+                    f"   ⏭️ Incremental: skip {skipped} URLs đã crawl — "
+                    f"{len(new_urls)} URL mới cần fetch"
+                )
+            else:
+                logger.info(f"   ✅ Tất cả {len(new_urls)} URLs là mới")
+            return new_urls
+        except Exception as e:
+            logger.warning(f"   ⚠️ _filter_new_urls error: {e} — crawl all")
+            return urls  # fallback an toàn
 
     # ================================================================
     # MOUSE INTERACTION — Tự nhiên hơn

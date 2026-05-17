@@ -1,4 +1,5 @@
 # crawler/topcv_crawler.py
+import re
 from bs4 import BeautifulSoup
 from crawler.base_crawler import BaseCrawler, logger
 from models.job_model import JobModel
@@ -45,9 +46,18 @@ class TopCVCrawler(BaseCrawler):
                 # Lấy HTML và parse
                 html = self.get_html()
                 page_jobs = self.parse_job_list(html)
-                logger.info(f"   → Tìm thấy {len(page_jobs)} jobs")
+                logger.info(f"   → Tìm thấy {len(page_jobs)} jobs trên trang")
 
-                self.jobs.extend(page_jobs)
+                for job in page_jobs:
+                    # RÚT GỌN CHỈ TEST 5 JOBS THEO YÊU CẦU ĐỂ TIẾT KIỆM THỜI GIAN
+                    if len(self.jobs) >= 5:
+                        break
+                    if job.job_url:
+                        self.extract_detail(job)
+                    self.jobs.append(job)
+
+                if len(self.jobs) >= 5:
+                    break
 
         finally:
             self.stop()
@@ -132,6 +142,212 @@ class TopCVCrawler(BaseCrawler):
             if pattern in tag_lower:
                 return False
         return True
+
+    # ==================== PARSE CHI TIẾT ====================
+
+    def extract_detail(self, job: JobModel):
+        """Extract chi tiết từ trang detail (Mô tả, Yêu cầu, Lĩnh vực, Hình thức)"""
+        try:
+            logger.info(f"   → Đang lấy chi tiết: {job.title}")
+            self.goto(job.job_url)
+            self.human_sleep(1, 2)
+            html = self.get_html()
+            soup = BeautifulSoup(html, "lxml")
+
+            desc_parts, req_parts = [], []
+            
+            # Cấu trúc phổ biến: div có class = job-description__item
+            sections = soup.select(".job-description__item")
+            if not sections:
+                # Cấu trúc cũ
+                headers = soup.find_all("h3")
+                for h3 in headers:
+                    title = h3.get_text(strip=True).lower()
+                    content_div = h3.find_next_sibling("div")
+                    if content_div:
+                        text = content_div.get_text(separator="\n", strip=True)
+                        if "mô tả" in title or "quyền lợi" in title:
+                            desc_parts.append(text)
+                        elif "yêu cầu" in title or "kinh nghiệm" in title:
+                            req_parts.append(text)
+            else:
+                for section in sections:
+                    title_el = section.select_one("h3")
+                    if not title_el: continue
+                    title = title_el.get_text(strip=True).lower()
+                    content_div = section.select_one(".job-description__item--content")
+                    if content_div:
+                        text = content_div.get_text(separator="\n", strip=True)
+                        if "mô tả" in title or "quyền lợi" in title:
+                            desc_parts.append(text)
+                        elif "yêu cầu" in title or "kinh nghiệm" in title:
+                            req_parts.append(text)
+
+            if desc_parts:
+                job.description = "\n---\n".join(desc_parts)
+            if req_parts:
+                job.requirements = "\n---\n".join(req_parts)
+                
+            # Thông tin chung: Hình thức làm việc, Kinh nghiệm, Học vấn
+            # Thông tin chung: Hình thức làm việc, Kinh nghiệm, Học vấn
+            containers = soup.select("[class*='item'], [class*='info'], [class*='group'], [class*='section']")
+            for container in containers:
+                title_el = container.select_one("[class*='title']")
+                val_el = container.select_one("[class*='value'], [class*='content']")
+                if title_el and val_el:
+                    if title_el.parent == container and val_el.parent == container:
+                        t = title_el.get_text(strip=True).lower()
+                        v = val_el.get_text(separator=" ", strip=True)
+                        if t and v and t != v.lower():
+                            if "hình thức" in t:
+                                job.job_type = v
+                            elif "kinh nghiệm" in t:
+                                job.experience_year = v
+                            elif "học vấn" in t or "trình độ" in t or "bằng cấp" in t:
+                                job.education = v
+                            elif "cấp bậc" in t:
+                                # TopCV thường có Cấp bậc, có thể bỏ qua hoặc đưa vào description
+                                pass
+            
+            # Fallback nếu TopCV dùng DOM ẩn hoặc khác cho Kinh nghiệm
+            if not job.experience_year:
+                import re
+                el = soup.find(string=re.compile("Kinh nghiệm", re.IGNORECASE))
+                if el:
+                    parent = el.find_parent(["div", "span", "p"])
+                    if parent:
+                        sib = parent.find_next_sibling(["div", "span", "strong", "p"])
+                        if sib:
+                            job.experience_year = sib.get_text(strip=True)
+            
+            # Bổ sung kỹ năng (skills) nếu trang chi tiết có
+            if job.skills is None:
+                job.skills = []
+            
+            # Quét theo thẻ a (cách cũ)
+            detail_skills = soup.select(".job-detail__skill--content a, .box-category .job-detail__box--content a, .job-detail__info--item-content a, .job-detail__category a")
+            for s in detail_skills:
+                t = s.get_text(strip=True)
+                if t and self._is_valid_skill_tag(t) and t not in job.skills:
+                    job.skills.append(t)
+
+            # Quét theo thẻ theo label (DOM mới của TopCV)
+            for label_text in ["Kỹ năng cần có", "Kỹ năng nên có", "Chuyên môn"]:
+                label_el = soup.find(string=re.compile(label_text, re.IGNORECASE))
+                if label_el:
+                    parent = label_el.find_parent(["div", "h3"])
+                    if parent:
+                        container = parent.find_next_sibling("div") or parent.parent
+                        if container:
+                            for tag in container.select("span, a, div[class*='tag'], div[class*='content']"):
+                                text = tag.get_text(strip=True)
+                                if text and len(text) < 40 and label_text not in text:
+                                    if text not in job.skills and self._is_valid_skill_tag(text):
+                                        job.skills.append(text)
+
+            # Ngành nghề / Lĩnh vực (Industry)
+            # Dò tìm đúng label để tránh vướng phải Footer (Top Ngành Nghề)
+            for label in soup.find_all(string=re.compile(r"Lĩnh vực|Ngành nghề|Chuyên môn", re.IGNORECASE)):
+                text = label.get_text(strip=True).lower()
+                # Bỏ qua các tiêu đề thuộc Footer hoặc Widget gợi ý
+                if len(text) > 20 or "top" in text or "tìm" in text or "việc làm" in text or "khác" in text:
+                    continue
+                
+                parent = label.find_parent(["div", "li", "h3", "td"])
+                if parent:
+                    # Các ngành nghề thường nằm kế bên
+                    sib = parent.find_next_sibling(["div", "p", "a", "span", "ul"])
+                    if sib:
+                        job.industry = sib.get_text(separator=", ", strip=True)
+                        break
+
+            # Địa điểm làm việc chi tiết (Location)
+            loc_label = soup.find(string=re.compile(r"Địa điểm làm việc", re.IGNORECASE))
+            if loc_label:
+                parent = loc_label.find_parent(["div", "h3", "h2"])
+                if parent:
+                    loc_container = parent.find_next_sibling("div")
+                    if loc_container:
+                        loc_text = loc_container.get_text(separator=", ", strip=True)
+                        if loc_text and len(loc_text) > 5 and len(loc_text) < 500:
+                            job.location = re.sub(r"^\-\s*", "", loc_text.strip())
+
+            # Kỹ năng (Skills) deduplication fix (chỉ lọc những skill rác)
+            if job.skills:
+                unique_skills = []
+                for s in job.skills:
+                    if not any(s.lower() == us.lower() for us in unique_skills):
+                        unique_skills.append(s)
+                job.skills = unique_skills
+
+            # Smart Parser: Đọc free-text để điền các ô còn trống
+            self._fill_missing_fields_from_text(job)
+
+        except Exception as e:
+            logger.warning(f"   ⚠️ Lỗi extract detail: {e}")
+
+    def _fill_missing_fields_from_text(self, job: JobModel):
+        """
+        Smart Parser: Đọc toàn bộ nội dung requirements/description 
+        để vét nốt các thông tin bị thiếu (NULL).
+        """
+        full_text = f"{job.requirements or ''} {job.description or ''}".lower()
+        if not full_text.strip(): return
+
+        # 1. Experience Year
+        if not job.experience_year or "kinh nghiệm" == job.experience_year.lower().strip():
+            job.experience_year = ""  # Reset nếu bị lấy nhầm chữ "Kinh nghiệm"
+            exp_match = re.search(r"(từ\s*\d+\s*đến\s*\d+\s*năm|\d+\+?\s*(?:năm|year)s?\s*(?:kinh nghiệm|experience)|ít nhất\s*\d+\s*năm)", full_text)
+            if exp_match:
+                job.experience_year = exp_match.group(1).title()
+            elif re.search(r"(không yêu cầu kinh nghiệm|no experience required|fresher)", full_text):
+                job.experience_year = "Không yêu cầu kinh nghiệm"
+
+        # 2. Education
+        if not job.education:
+            if re.search(r"(bachelor|đại học|cử nhân)", full_text):
+                job.education = "Đại học"
+            elif re.search(r"(college|cao đẳng)", full_text):
+                job.education = "Cao đẳng"
+            elif re.search(r"(master|thạc sĩ)", full_text):
+                job.education = "Thạc sĩ"
+
+        # 3. Job Type
+        if not job.job_type:
+            if "full-time" in full_text or "toàn thời gian" in full_text:
+                job.job_type = "Full-time"
+            elif "part-time" in full_text or "bán thời gian" in full_text:
+                job.job_type = "Part-time"
+            elif "freelance" in full_text:
+                job.job_type = "Freelance"
+
+        # 4. Skills (vét từ text nếu trống)
+        if not job.skills:
+            job.skills = []
+            common_skills = ["python", "java", "javascript", "react", "node.js", "c#", ".net", "sql", "aws", "docker", "php", "vue", "angular"]
+            for skill in common_skills:
+                if re.search(r"\b" + re.escape(skill) + r"\b", full_text):
+                    job.skills.append(skill.upper() if len(skill) <= 3 else skill.title())
+                    
+        # 5. Industry
+        if not job.industry:
+            job.industry = "IT / Software"
+
+        # 6. Salary (Tìm mức lương ẩn trong bài nếu lương bên ngoài là Thỏa thuận hoặc trống)
+        if not job.salary or job.salary.lower() in ["thỏa thuận", "thoả thuận", "thương lượng", "negotiable"]:
+            text_to_search = f"{job.title} {full_text}".lower()
+            sal_patterns = [
+                r"(\$[\d,\.]+\s*(?:-|to|đến|~)\s*\$[\d,\.]+)", # $1000 - $2000
+                r"([\d,\.]+\s*(?:-|to|đến|~)\s*[\d,\.]+\s*(?:usd|triệu|tr|vnđ|vnd|k))", # 1000 - 2000 usd, 15 - 20 triệu
+                r"((?:up to|lên đến|tới|maximum|max)\s*\$?\s*[\d,\.]+\s*(?:usd|triệu|tr|k)?)", # up to $2000
+                r"((?:mức lương|thu nhập|salary|lương).{0,15}?\$?\s*[\d,\.]+\s*(?:usd|triệu|tr|k))", # salary: 2000 usd
+            ]
+            for p in sal_patterns:
+                sal_match = re.search(p, text_to_search)
+                if sal_match:
+                    job.salary = sal_match.group(1).title()
+                    break
+
     def debug_save_html(self, page_num: int = 1):
         """
         Lưu HTML thực tế ra file để inspect selector.
