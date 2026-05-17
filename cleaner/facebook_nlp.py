@@ -159,6 +159,8 @@ class FacebookNLP:
 
         # Pattern sau từ khóa địa chỉ cụ thể (ưu tiên cao nhất)
         patterns = [
+            r'cơ\s*sở\s*(?:\d+)?[:\s]+([^\n]{5,100})',   # Thêm mới cho "Cơ sở 16:"
+            r'co\s*so\s*(?:\d+)?[:\s]+([^\n]{5,100})',   # Thêm mới
             r'chi\s*nhánh[:\s]+([^\n]{5,100})',
             r'chi\s*nhanh[:\s]+([^\n]{5,100})',          # ASCII fallback ← THÊM
             r'địa\s*chỉ[:\s]+([^\n]{5,100})',

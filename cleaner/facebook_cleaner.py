@@ -1,9 +1,21 @@
 # cleaner/facebook_cleaner.py
 import re
 import hashlib
+import unicodedata
 
 class FacebookCleaner:
     """Clean và extract data từ Facebook post content"""
+
+    # ============================================================
+    # SECTION HEADERS — để tách nội dung theo cấu trúc bài
+    # ============================================================
+    _SECTION_HEADERS = [
+        "mô tả công việc", "công việc của bạn", "nhiệm vụ",
+        "yêu cầu", "yêu cầu nhỏ", "yêu cầu công việc",
+        "quyền lợi", "chế độ", "phúc lợi", "ưu đãi",
+        "liên hệ", "ứng tuyển", "contact",
+        "địa chỉ", "địa điểm", "thời gian", "lương",
+    ]
 
     # ============================================================
     # EXTRACT FIELDS
@@ -11,85 +23,136 @@ class FacebookCleaner:
 
     def extract_title(self, content: str) -> str:
         """
-        Trích xuất tiêu đề job từ bài viết.
-        Ưu tiên: Tên quán/công ty + vị trí tuyển dụng từ dòng đầu.
-        VD: "Bánh xèo Bà Thuý cần tuyển:" → "Nhân viên phụ quán ăn"
+        Trích xuất tiêu đề công việc.
+        Chiến lược: Tìm dòng chứa tên vị trí thực sự (nhân viên X, tuyển X...)
+        Tránh lấy câu kêu gọi, nội dung giữa bài, hoặc số lượng.
         """
+        content = self._strip_facebook_noise(content)
         lines = [l.strip() for l in content.split("\n") if l.strip()]
         if not lines:
             return ""
 
-        # Bước 1: Tìm dòng chứa vị trí tuyển dụng cụ thể
-        title_patterns = [
-            # Dòng có từ khóa vị trí sau dấu +, -, •
-            r'^[+\-•*]\s*(.{5,80})$',
-            # "tuyển: XXX" hoặc "cần: XXX"
-            r'(?:tuyển|cần tuyển|cần|tuyển dụng)[:\s]+(.{5,80})',
-            # Vị trí công việc phổ biến
-            r'((?:nhân viên|kỹ thuật viên|trưởng|phó|giám sát|quản lý|chuyên viên|lập trình viên|kế toán|thu ngân|bảo vệ|tài xế|shipper|phục vụ|phụ bếp|bartender|barista|đầu bếp|thợ|công nhân)\s+[^\n]{3,60})',
-        ]
+        # --- Bước 1: Dòng có pattern "tuyển [vị trí]" hoặc "[Tên cty] tuyển [vị trí]" ---
+        pattern_recruit = re.compile(
+            r'(?:cần tuyển|tuyển dụng|tuyển gấp|tuyển)\s*[:·]?\s*(.{5,80})',
+            re.IGNORECASE
+        )
+        # Chỉ xét 5 dòng đầu
+        for line in lines[:5]:
+            m = pattern_recruit.search(line)
+            if m:
+                candidate = m.group(1).strip().rstrip(":,.")
+                # Loại bỏ nếu bắt đầu bằng số (vd: "20 nhân viên" → số lượng, không phải title)
+                if not re.match(r'^\d+\s+', candidate) and 5 < len(candidate) < 120:
+                    return self._normalize_title(candidate)
 
-        for pattern in title_patterns:
-            for line in lines[:8]:  # Chỉ xét 8 dòng đầu
-                m = re.search(pattern, line, re.IGNORECASE)
-                if m:
-                    title = self._clean_text(m.group(1)).strip().rstrip(":,")
-                    if 5 < len(title) < 150:
-                        return title
+        # --- Bước 1b: "tìm đồng đội" → lấy dòng tiếp theo ---
+        for line in lines[:3]:
+            if re.search(r't[iì]m\s*đ[oồ]ng\s*đ[oộ]i', line, re.IGNORECASE):
+                # Lấy dòng thứ 2 nếu có
+                idx = lines.index(line)
+                if idx + 1 < len(lines):
+                    candidate = re.sub(r'^[\-•*\d+\s]+', '', lines[idx + 1]).strip()
+                    if not re.match(r'^\d+\s+', candidate) and 5 < len(candidate) < 120:
+                        return self._normalize_title(candidate)
+                break
 
-        # Bước 2: Dùng dòng đầu tiên nhưng cắt bỏ phần "cần tuyển" header
+        # --- Bước 2: Dòng có tên vị trí job phổ biến ---
+        job_role_pattern = re.compile(
+            r'^[\-•*▪️►]?\s*((?:nhân viên|phục vụ|thu ngân|đầu bếp|phụ bếp|pha chế|'
+            r'bartender|barista|bảo vệ|tài xế|shipper|kế toán|lập trình|kỹ thuật|'
+            r'thiết kế|marketing|sale|sales|tư vấn|thợ may|thợ hàn|công nhân|'
+            r'trưởng|quản lý|giám sát|chuyên viên|trợ lý|thực tập)[^\n]{0,60})',
+            re.IGNORECASE
+        )
+        for line in lines[:8]:
+            m = job_role_pattern.search(line)
+            if m:
+                candidate = m.group(1).strip().rstrip(":,.")
+                if not re.match(r'^\d+\s+', candidate) and 5 < len(candidate) < 120:
+                    return self._normalize_title(candidate)
+
+        # --- Bước 3: Dòng đầu tiên nếu ngắn và có vẻ là tên/thương hiệu ---
+        # Lọc dòng đầu: chỉ dùng nếu < 80 ký tự và không phải câu hỏi/cảm thán
         first = lines[0]
-        for keyword in ["cần tuyển:", "cần tuyển", "tuyển dụng:", "tuyển:"]:
-            if keyword.lower() in first.lower():
-                # Lấy dòng tiếp theo sau phần header
-                if len(lines) > 1:
-                    candidate = lines[1].lstrip("+•-* ").strip()
-                    if len(candidate) > 5:
-                        return self._clean_text(candidate)[:200]
+        if len(first) < 80 and not re.search(r'[?!]', first):
+            # Cắt bỏ phần "cần tuyển" header
+            for kw in ["cần tuyển", "tuyển dụng", "tuyển", "tìm đồng đội"]:
+                if kw.lower() in first.lower():
+                    if len(lines) > 1:
+                        candidate = re.sub(r'^[\-•*▪️►\s]+', '', lines[1]).strip()
+                        if 5 < len(candidate) < 120:
+                            return self._normalize_title(candidate)
+            return self._normalize_title(first)[:120]
 
-        # Bước 3: Fallback - dùng dòng đầu tiên, giới hạn độ dài
-        return self._clean_text(first)[:150]
+        # --- Bước 4: Fallback --- lấy dòng đầu có độ dài hợp lý
+        for line in lines[:5]:
+            if 10 < len(line) < 100:
+                return self._normalize_title(line)
+
+        return self._normalize_title(lines[0])[:120]
 
     def extract_company(self, content: str) -> str:
         """
         Trích xuất tên công ty/cửa hàng/nhà hàng.
-        Ưu tiên dòng đầu tiên vì thường chứa tên thương hiệu.
-        VD: "Bánh xèo Bà Thuý cần tuyển" → "Bánh xèo Bà Thuý"
+        Ưu tiên: dòng đầu trước "cần tuyển", hoặc tên sau prefix thương hiệu.
         """
+        content = self._strip_facebook_noise(content)
         lines = [l.strip() for l in content.split("\n") if l.strip()]
         if not lines:
             return ""
 
-        content_lower = content.lower()
-
-        # Pattern 1: Tên công ty trước "cần tuyển / tuyển dụng / thông báo"
+        # --- Bước 1: Tên cty/thương hiệu trước "cần tuyển/tuyển dụng" ---
         m = re.match(
-            r'^(.{3,80}?)\s+(?:cần tuyển|tuyển dụng|tuyển|thông báo|kính mời)',
+            r'^(.{3,80}?)\s+(?:cần tuyển|tuyển dụng|tuyển gấp|tuyển|tìm đồng đội|thông báo)',
             lines[0], re.IGNORECASE
         )
         if m:
-            company = m.group(1).strip().rstrip(":,")
-            if 3 < len(company) < 100:
-                return self._clean_text(company)
+            company = self._clean_text(m.group(1)).strip().rstrip(":,")
+            # Phải là tên thực (không phải câu hỏi, không toàn số)
+            if 2 < len(company) < 100 and not re.match(r'^\d+$', company):
+                return company
 
-        # Pattern 2: Sau từ khóa chỉ tên cơ sở
-        patterns = [
-            r'(?:nhà hàng|quán|shop|cửa hàng|công ty|cty|spa|salon|gym|trường|trung tâm|khách sạn|resort|cafe|coffee)\s+([^\n,]{3,80})',
+        # --- Bước 2: Prefix nhận diện loại hình ---
+        prefix_pattern = re.compile(
+            r'(?:nhà hàng|quán|shop|cửa hàng|công ty|cty|spa|salon|gym|'
+            r'trường|trung tâm|khách sạn|resort|cafe|coffee|tiệm|xưởng|'
+            r'công ty tnhh|công ty cp)\s+([^\n,]{3,80})',
+            re.IGNORECASE
+        )
+        m = prefix_pattern.search(content[:500])  # Chỉ tìm trong 500 ký tự đầu
+        if m:
+            start, end = m.start(1), m.end(1)
+            name = self._clean_text(content[start:end]).strip().rstrip(":,")
+            # Cắt tại stop words
+            name = re.split(r'\s+(?:cần|tuyển|đang|thông)', name, flags=re.IGNORECASE)[0]
+            if 2 < len(name) < 100:
+                return name
+
+        # --- Bước 3: Dòng đầu viết hoa hoàn toàn thường là tên thương hiệu ---
+        if lines[0].isupper() and 3 < len(lines[0]) < 80:
+            return self._clean_text(lines[0])
+
+        # --- Bước 4: Fallback — kiểm tra dòng đầu là câu nhắn/cảm thán hay tên thực ---
+        # Nếu dòng đầu có chứa emoticon/hỏi hán/kiểu kêu gọi → không phải tên công ty
+        first_lower = lines[0].lower()
+        non_company_signals = [
+            'bạn ', 'các bạn', 'vậy ', 'ai ', 'hãy ', 'mình ', 'chúng ta',
+            'cần ', 'ưu tiên', 'thông báo', 'nhận hồ sơ',
         ]
-        for pattern in patterns:
-            match = re.search(pattern, content_lower)
-            if match:
-                # Lấy lại đúng case từ content gốc (không lower)
-                start = match.start(1)
-                end = match.end(1)
-                return self._clean_text(content[start:end]).strip()[:300]
+        if not any(sig in first_lower for sig in non_company_signals):
+            # Dòng đầu có vẻ là tên thương hiệu (không quá dài, không phải câu hỏi)
+            if len(lines[0]) < 80 and '?' not in lines[0]:
+                name = self._clean_text(lines[0]).strip()
+                # Tránh trả về tính từ mô tả (ít hơn 3 token)
+                if len(name.split()) >= 2:
+                    return name
 
         return ""
 
     def extract_salary(self, content: str) -> str:
         """
         Trích xuất thông tin lương.
-        Fix: nhận dạng đầy đủ "4tr5", "4.5tr", "4,5 triệu"
         """
         content_lower = content.lower()
 
@@ -109,7 +172,6 @@ class FacebookCleaner:
         for pattern in patterns:
             matches = re.findall(pattern, content_lower)
             if matches:
-                # Lấy match dài nhất (đầy đủ nhất)
                 best = max(matches, key=len).strip()
                 if len(best) >= 2:
                     return best[:200]
@@ -118,40 +180,49 @@ class FacebookCleaner:
 
     def extract_location(self, content: str) -> str:
         """
-        Trích xuất địa chỉ — chỉ lấy đến hết địa chỉ, không lấy thêm text.
-        Fix: cắt đúng tại xuống dòng, không để địa chỉ dính với "Liên hệ 0..."
+        Trích xuất địa chỉ làm việc.
         """
         content_lower = content.lower()
 
         patterns = [
-            r'địa chỉ[:\s]+([^\n]{5,100})',
-            r'địa điểm[:\s]+([^\n]{5,100})',
-            r'làm việc tại[:\s]+([^\n]{5,80})',
-            r'khu vực[:\s]+([^\n]{5,60})',
-            r'tại[:\s]+([^\n]{5,50})',
-            r'(?:số|địa)\s+\d+[^\n]{5,80}',
+            r'địa\s*chỉ\s*(?:làm\s*việc)?[:\s]+([^\n]{5,150})',
+            r'địa\s*điểm\s*(?:làm\s*việc)?[:\s]+([^\n]{5,150})',
+            r'cơ\s*sở\s*\d*\s*[:\s]+([^\n]{5,100})',
+            r'làm\s*việc\s*tại[:\s]+([^\n]{5,100})',
+            r'khu\s*vực[:\s]+([^\n]{5,80})',
+            r'văn\s*phòng[:\s]+([^\n]{5,100})',
         ]
 
         for pattern in patterns:
             match = re.search(pattern, content_lower)
             if match:
-                loc = match.group(1).strip()
-                # Cắt bỏ mọi thứ sau "liên hệ", số điện thoại, hoặc dấu xuống dòng
+                loc = content[match.start(1):match.end(1)].strip()
+                # Cắt tại liên hệ/số điện thoại/xuống dòng
                 loc = re.split(r'(?:liên hệ|tel|sđt|hotline|0\d{9}|\n)', loc, flags=re.IGNORECASE)[0]
-                loc = re.split(r'[,\.;]', loc)[0].strip()
-                if 3 < len(loc) < 150:
+                loc = loc.rstrip(",.;").strip()
+                if 5 < len(loc) < 200:
                     return loc[:255]
 
+        # Fallback: tìm số nhà + tên đường
+        street_match = re.search(
+            r'(\d+[^\n,]{5,80}(?:đường|phố|ngõ|hẻm|quận|phường|tp\.|thành phố)[^\n,]{3,60})',
+            content_lower
+        )
+        if street_match:
+            start = street_match.start(1)
+            return content[start:start + 120].strip()
+
         # Fallback: tên thành phố
-        cities = [
-            "đà nẵng", "da nang", "hà nội", "hanoi",
-            "hồ chí minh", "hcm", "tp.hcm",
-            "bình dương", "đồng nai", "cần thơ",
-            "hải phòng", "nha trang", "huế",
-        ]
-        for city in cities:
-            if city in content_lower:
-                return city.title()
+        cities = {
+            "đà nẵng": "Đà Nẵng", "da nang": "Đà Nẵng",
+            "hà nội": "Hà Nội", "hanoi": "Hà Nội",
+            "hồ chí minh": "TP. Hồ Chí Minh", "hcm": "TP. Hồ Chí Minh",
+            "bình dương": "Bình Dương", "đồng nai": "Đồng Nai",
+            "cần thơ": "Cần Thơ", "hải phòng": "Hải Phòng",
+        }
+        for key, val in cities.items():
+            if key in content_lower:
+                return val
 
         return ""
 
@@ -163,40 +234,124 @@ class FacebookCleaner:
             "lái xe", "bằng b2", "bằng lái",
             "giao tiếp", "bán hàng", "tư vấn",
             "kế toán", "thiết kế", "lập trình",
+            "pha chế", "phục vụ", "bartender",
         ]
         content_lower = content.lower()
         return [sk for sk in skill_keywords if sk in content_lower]
 
     def extract_phone(self, content: str) -> str:
         """Trích xuất số điện thoại"""
+        # Chuẩn hóa trước: xóa dấu chấm/gạch giữa số
+        content_clean = re.sub(r'(\d)[.\-\s](\d)', r'\1\2', content)
         patterns = [
-            r'(?:0|\+84)[\s\-\.]?(?:\d[\s\-\.]?){9}',
-            r'0\d{9,10}',
+            r'(?:0|\+84)\d{9}',
         ]
         for pat in patterns:
-            match = re.search(pat, content)
+            match = re.search(pat, content_clean)
             if match:
                 phone = re.sub(r'[\s\-\.]', '', match.group())
                 if len(phone) >= 10:
                     return phone
         return ""
 
+    def extract_job_type(self, content: str) -> str:
+        """Trích xuất loại hình công việc"""
+        c = content.lower()
+        types = []
+        if re.search(r'full[\s\-]?time|toàn thời gian', c):
+            types.append("Toàn thời gian")
+        if re.search(r'part[\s\-]?time|bán thời gian|partime', c):
+            types.append("Bán thời gian")
+        if "thời vụ" in c:
+            types.append("Thời vụ")
+        return ", ".join(types) if types else ""
+
+    def extract_requirements(self, content: str) -> str:
+        """
+        Trích xuất phần yêu cầu công việc.
+        Dừng tại: quyền lợi / chế độ / liên hệ / ứng tuyển.
+        """
+        stop = r'(?:quyền lợi|phúc lợi|chế độ|ưu đãi|liên hệ|ứng tuyển|contact|hồ sơ)'
+        match = re.search(
+            r'(?:yêu cầu(?:\s+nhỏ)?(?:\s+công\s*việc)?|requirements)[:\s]*(.*?)(?=\n\s*' + stop + r'|\Z)',
+            content, re.IGNORECASE | re.DOTALL
+        )
+        if match:
+            req = match.group(1).strip()
+            # Xóa "Ẩn bớt" nếu còn sót
+            req = re.sub(r'\s*ẩn bớt\s*$', '', req, flags=re.IGNORECASE).strip()
+            if len(req) > 10:
+                return req
+        return ""
+
     # ============================================================
-    # CLEAN TEXT
+    # HELPERS
     # ============================================================
 
+    def _strip_facebook_noise(self, text: str) -> str:
+        """Xóa các chuỗi rác của Facebook UI"""
+        noise = [
+            r'\s*ẩn bớt\s*$',        # Nút "Ẩn bớt"
+            r'\s*see more\s*$',       # "See more"
+            r'\s*xem thêm\s*$',       # "Xem thêm"
+        ]
+        for pattern in noise:
+            text = re.sub(pattern, '', text, flags=re.IGNORECASE | re.MULTILINE)
+        return text.strip()
+
+    def _normalize_title(self, title: str) -> str:
+        """Chuẩn hóa title: bỏ emoji, viết hoa chữ đầu, trim"""
+        title = self._clean_text(title)
+        title = re.sub(r'^[\-•*▪️►\s]+', '', title).strip()
+        if title:
+            title = title[0].upper() + title[1:]
+        return title[:200]
+
     def _clean_text(self, text: str) -> str:
-        """Xóa emoji, ký tự đặc biệt, normalize space"""
+        """Xóa emoji, bold unicode Facebook, chuẩn hóa viết tắt, normalize space"""
+        # Xóa emoji
         emoji_pattern = re.compile(
             "[\U00010000-\U0010ffff"
             "\U0001F600-\U0001F64F"
             "\U0001F300-\U0001F5FF"
             "\U0001F680-\U0001F6FF"
             "\U0001F1E0-\U0001F1FF"
+            "\u2600-\u26FF\u2700-\u27BF"
             "]+",
             flags=re.UNICODE
         )
         text = emoji_pattern.sub("", text)
+
+        # Chỉ flatten các ký tự bold/italic unicode Facebook (Mathematical Alphanumeric Symbols)
+        # Giữ nguyên tiếng Việt có dấu
+        result = []
+        for ch in text:
+            cp = ord(ch)
+            # Bold/Italic Latin: U+1D400–1D7FF
+            if 0x1D400 <= cp <= 0x1D7FF:
+                norm = unicodedata.normalize('NFKD', ch)
+                ascii_ch = norm.encode('ascii', 'ignore').decode('ascii')
+                result.append(ascii_ch if ascii_ch else ch)
+            else:
+                result.append(ch)
+        text = ''.join(result)
+
+        # Chuẩn hóa viết tắt phổ biến
+        abbreviations = {
+            r'\bnv\b': 'nhân viên',
+            r'\bpt\b': 'part-time',
+            r'\bft\b': 'full-time',
+            r'\bđc\b': 'địa chỉ',
+            r'\bsp\b': 'sản phẩm',
+            r'\bkh\b': 'khách hàng',
+            r'\bql\b': 'quản lý',
+            r'\bkn\b': 'kinh nghiệm',
+            r'\btg\b': 'thời gian',
+            r'\blh\b': 'liên hệ',
+        }
+        for pat, repl in abbreviations.items():
+            text = re.sub(pat, repl, text, flags=re.IGNORECASE)
+
         text = re.sub(r'\s+', ' ', text).strip()
         return text
 
