@@ -131,43 +131,66 @@ class JobNormalizer:
     def normalize_salary(self, salary_str: str) -> Tuple[float, float]:
         """
         Parse salary → (min_million_vnd, max_million_vnd).
-        "25k/h" → hourly → monthly ≈ 4.5tr  → (4.0, 5.0)
-        "5-7 triệu" → (5.0, 7.0)
-        "7tr" → (7.0, 7.0)
+        Hỗ trợ: 4tr5, 4.5tr, 4-7tr, 20k/h, 8.000.000, 4 triệu, Thỏa thuận
         """
-        if not salary_str:
+        if not salary_str or salary_str.lower().strip() in ("thỏa thuận", "thoả thuận", "negotiate", ""):
             return 0.0, 0.0
 
-        text = salary_str.lower().replace(",", ".")
+        text = salary_str.lower().strip()
         text = self._flatten_unicode(text)
+        # Chuẩn hóa: 4tr5 → 4.5tr
+        text = re.sub(r'(\d+)tr(\d)\b', lambda m: f"{m.group(1)}.{m.group(2)}tr", text)
+        # Xóa dấu phẩy ngăn cách (4,5tr → 4.5tr)
+        text = text.replace(",", ".")
 
-        # Case 1: theo giờ (k/h, k/giờ)
-        m = re.search(r"(\d+(?:\.\d+)?)\s*k\s*/\s*(?:h|gio|hour)", text)
+        def to_million(val: float) -> float:
+            """Chuyển về đơn vị triệu: nếu > 500 thì đang là VNĐ"""
+            if val > 500:
+                return round(val / 1_000_000, 2)
+            return round(val, 2)
+
+        # Case 1: k/h hoặc k/giờ → quy ra tháng
+        m = re.search(r'(\d+(?:\.\d+)?)\s*k\s*/\s*(?:h|gio|hour|gi)', text)
         if m:
-            rate = float(m.group(1)) * 1000   # → VND/h
-            monthly = rate * 8 * 26 / 1_000_000   # → triệu/tháng (8h/day, 26 days)
-            return round(monthly * 0.8, 1), round(monthly * 1.2, 1)
+            rate_k = float(m.group(1))        # nghìn/giờ
+            monthly_million = rate_k * 8 * 26 / 1000   # triệu/tháng (8h, 26 ngày)
+            return round(monthly_million * 0.85, 1), round(monthly_million * 1.15, 1)
 
-        # Case 2: khoảng  "5-7 triệu" / "5tr - 7tr"
+        # Case 2: khoảng "5tr - 7tr" / "5~7tr" / "5 đến 7 triệu"
         m = re.search(
-            r"(\d+(?:\.\d+)?)\s*(?:tr|triệu|m|million)?"
-            r"\s*[-–đến]+\s*(\d+(?:\.\d+)?)\s*(?:tr|triệu|m|million)?",
+            r'(\d+(?:\.\d+)?)\s*(?:tr|trieu|triệu|m|million)?'
+            r'\s*[-–~đến]+\s*'
+            r'(\d+(?:\.\d+)?)\s*(?:tr|trieu|triệu|m|million)?',
             text
         )
         if m:
             lo, hi = float(m.group(1)), float(m.group(2))
-            # Nếu cả hai đều < 50 → đơn vị triệu; nếu > 1000 → nghìn
-            if lo > 100:
-                lo, hi = lo / 1000, hi / 1000
-            return round(lo, 1), round(hi, 1)
+            # Nếu giá trị lớn (VNĐ dạng 3.355.000 → đã replace dấu . thành số)
+            lo, hi = to_million(lo), to_million(hi)
+            if lo > 0 and hi >= lo:
+                return lo, hi
 
-        # Case 3: đơn lẻ "7tr" / "7 triệu"
-        m = re.search(r"(\d+(?:\.\d+)?)\s*(?:tr|triệu|m|million)", text)
+        # Case 3: VNĐ dạng "8.000.000" (3+ chữ số sau dấu chấm)
+        m = re.search(r'(\d{1,3}(?:\.\d{3})+)', text)
         if m:
-            v = float(m.group(1))
-            if v > 100:
-                v /= 1000
-            return round(v, 1), round(v, 1)
+            raw = float(m.group(1).replace(".", ""))
+            v = to_million(raw)
+            if v > 0:
+                return v, v
+
+        # Case 4: đơn lẻ "7tr" / "7.5tr" / "7 triệu"
+        m = re.search(r'(\d+(?:\.\d+)?)\s*(?:tr|trieu|triệu|m|million)\b', text)
+        if m:
+            v = to_million(float(m.group(1)))
+            if v > 0:
+                return v, v
+
+        # Case 5: khoảng k "20k - 30k" (đơn vị nghìn, không phải giờ)
+        m = re.search(r'(\d+)\s*k\s*[-–~]+\s*(\d+)\s*k', text)
+        if m:
+            lo_k, hi_k = float(m.group(1)), float(m.group(2))
+            # Nếu < 1000k → đơn vị nghìn/ngày/ca, không quy tháng → skip
+            return 0.0, 0.0
 
         return 0.0, 0.0
 

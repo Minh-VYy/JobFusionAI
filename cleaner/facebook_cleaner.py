@@ -108,8 +108,11 @@ class FacebookCleaner:
             lines[0], re.IGNORECASE
         )
         if m:
-            company = self._clean_text(m.group(1)).strip().rstrip(":,")
-            # Phải là tên thực (không phải câu hỏi, không toàn số)
+            company = self._clean_text(m.group(1)).strip()
+            # Cắt bỏ động từ hành động thừa ở cuối (ĐANG, cần, đang tuyển...)
+            company = re.sub(r'\s+(?:đang|cần|sẽ|vừa|mới)$', '', company, flags=re.IGNORECASE).strip()
+            company = company.rstrip(":,")
+            # Phải là tên thực (không phải câu hỏi, không toàn số, không quá ngắn)
             if 2 < len(company) < 100 and not re.match(r'^\d+$', company):
                 return company
 
@@ -129,22 +132,24 @@ class FacebookCleaner:
             if 2 < len(name) < 100:
                 return name
 
-        # --- Bước 3: Dòng đầu viết hoa hoàn toàn thường là tên thương hiệu ---
-        if lines[0].isupper() and 3 < len(lines[0]) < 80:
-            return self._clean_text(lines[0])
+        first_cleaned = self._clean_text(lines[0])
+        # --- Bước 3: Dòng đầu viết hoa hoàn toàn VÀ ngắn = tên thương hiệu ---
+        if lines[0].isupper() and 3 < len(lines[0]) < 80 and len(lines[0].split()) <= 4:
+            return first_cleaned
 
         # --- Bước 4: Fallback — kiểm tra dòng đầu là câu nhắn/cảm thán hay tên thực ---
-        # Nếu dòng đầu có chứa emoticon/hỏi hán/kiểu kêu gọi → không phải tên công ty
         first_lower = lines[0].lower()
         non_company_signals = [
             'bạn ', 'các bạn', 'vậy ', 'ai ', 'hãy ', 'mình ', 'chúng ta',
             'cần ', 'ưu tiên', 'thông báo', 'nhận hồ sơ',
+            'khi nào', 'như thế nào', 'thực sự', 'may mắn', 'nhận ra',
+            'là khi', 'chần chờ', 'chờ gì', 'nhận ra mình', 'mom ',
         ]
-        if not any(sig in first_lower for sig in non_company_signals):
-            # Dòng đầu có vẻ là tên thương hiệu (không quá dài, không phải câu hỏi)
+        # Câu quá dài (> 5 từ) hoặc chứa dấu chấm cuối câu thường là câu mô tả
+        is_descriptive = len(lines[0].split()) > 5 or lines[0].rstrip().endswith('.')
+        if not any(sig in first_lower for sig in non_company_signals) and not is_descriptive:
             if len(lines[0]) < 80 and '?' not in lines[0]:
                 name = self._clean_text(lines[0]).strip()
-                # Tránh trả về tính từ mô tả (ít hơn 3 token)
                 if len(name.split()) >= 2:
                     return name
 
@@ -153,27 +158,43 @@ class FacebookCleaner:
     def extract_salary(self, content: str) -> str:
         """
         Trích xuất thông tin lương.
+        Fix: loại số điện thoại, hỗ trợ 4tr5, định dạng VNĐ.
         """
-        content_lower = content.lower()
+        # Xóa số điện thoại khỏi nội dung trước khi tìm lương
+        content_no_phone = re.sub(r'(?:0|\+84)[\d\.\-\s]{9,13}', 'SĐT', content)
+        content_lower = content_no_phone.lower()
+
+        # Chuẩn hóa 4tr5 → 4.5tr trước khi match
+        content_lower = re.sub(
+            r'(\d+)tr(\d)\b',
+            lambda m: f"{m.group(1)}.{m.group(2)}tr",
+            content_lower
+        )
 
         patterns = [
-            # Kiểu "4tr5", "4tr", "4.5tr"
-            r'(\d+(?:[.,]\d+)?\s*tr\d*(?:\s*\d+)?(?:\s*/\s*(?:tháng|ca|h|giờ))?)',
-            # Kiểu "4.500.000", "4,500,000"
-            r'(\d{1,3}(?:[.,]\d{3})+\s*(?:đ|vnd|vnđ)?)',
-            # Kiểu "4 triệu", "4.5 triệu / tháng"
-            r'(\d+(?:[.,]\d+)?\s*triệu(?:\s*/\s*tháng)?)',
-            # Kiểu "40k/h", "50k"
-            r'(\d+\s*k(?:\s*/\s*(?:h|giờ|ca))?)',
-            # Kiểu sau từ khóa lương
+            # Ưu tiên: sau từ khóa lương (chính xác nhất)
             r'(?:lương|thu nhập|salary|mức lương)[:\s]+([^\n]{3,60})',
+            # Khoảng lương dạng "X ~ Y tr" hoặc "X - Y tr"
+            r'(\d+(?:[.,]\d+)?\s*(?:tr|triệu)\s*[~\-–đến]+\s*\d+(?:[.,]\d+)?\s*(?:tr|triệu)(?:\s*/\s*tháng)?)',
+            # Dạng "đơn" 4tr5, 7tr, 4.5tr
+            r'(\d+(?:[.,]\d+)?\s*tr(?:\s*/\s*(?:tháng|ca|h|giờ))?)',
+            # VNĐ: 8.000.000, 3.355.000
+            r'(\d{1,3}(?:\.\d{3}){1,2}\s*(?:đ|vnd|vnđ)?)',
+            # k/h: 20k/h, 25k
+            r'(\d+\s*k(?:\s*/\s*(?:h|giờ|ca))?)',
+            # triệu rõ ràng
+            r'(\d+(?:[.,]\d+)?\s*triệu(?:\s*/\s*tháng)?)',
         ]
 
         for pattern in patterns:
             matches = re.findall(pattern, content_lower)
             if matches:
-                best = max(matches, key=len).strip()
-                if len(best) >= 2:
+                # Lọc match quá ngắn hoặc là số điện thoại
+                valid = [m.strip() for m in matches
+                         if len(m.strip()) >= 3
+                         and not re.match(r'^\d{9,11}$', m.strip().replace('.', ''))]
+                if valid:
+                    best = max(valid, key=len)
                     return best[:200]
 
         return "Thỏa thuận"
