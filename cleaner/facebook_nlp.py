@@ -24,7 +24,6 @@ SPAM_PATTERNS = [
     "không cần đi làm",
     "tuyển ctv online",
     # ✅ Thêm mới — match Post 3
-    "không cần kinh nghiệm",   # standalone
     r"\d+tr.*tháng.*không cần",
     r"thu nhập.*\d+tr.*tháng",
 ]
@@ -266,7 +265,7 @@ class FacebookNLP:
                     spam_hits.append(pattern)
 
         # ✅ Fix: 1 pattern đủ để là spam nếu nghiêm trọng
-        serious = ["thu nhập khủng", "đa cấp", "cọc", "không cần kinh nghiệm"]
+        serious = ["thu nhập khủng", "đa cấp", "cọc"]
         for hit in spam_hits:
             if any(s in hit for s in serious):
                 return True, 1.0, hit
@@ -331,6 +330,14 @@ class FacebookNLP:
         r'quy[eế]n l[oợ]i',              # "quyền lợi"
         r'\bCV\b',                       # "CV"
         r'[Cc][Tt][Yy] |c[oô]ng ty',    # "cty "/"công ty"
+        r't[iì]m\s*đ[oồ]ng\s*đ[oộ]i',  # "tìm đồng đội"
+        r'nh[aâ]n\s*vi[eê]n',          # "nhân viên"
+        r'fulltime|parttime|part-time',
+        r'ca\s*l[aà]m\s*vi[eệ]c',
+        r'm[uứ]c\s*l[uư][oơ]ng',        # "mức lương"
+        r'v[iị]\s*tr[ií]',             # "vị trí"
+        r't[iì]m\s*b[aạ]n\s*(?:l[aà]m|ph[uụ])', # "tìm bạn làm/phụ"
+        r'cần\s*t[iì]m\s*(?:nam|n[uữ])\s*ph[uụ]', # "cần tìm nam/nữ phụ"
     ]
 
     # Tín hiệu mạnh: Đây là bài TÌM VIỆC
