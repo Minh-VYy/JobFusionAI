@@ -154,7 +154,8 @@ class VietnamWorksCrawler(BaseCrawler):
                 headings = soup.find_all(string=re.compile(heading_regex, re.IGNORECASE))
                 heading = None
                 for h in headings:
-                    if len(h.strip()) < 35 and "tìm kiếm" not in h.lower() and "nhập" not in h.lower():
+                    htext = h.strip().lower()
+                    if len(htext) < 35 and "tìm kiếm" not in htext and "nhập" not in htext and "tất cả" not in htext:
                         heading = h
                         break
                 if not heading: return ""
@@ -186,8 +187,8 @@ class VietnamWorksCrawler(BaseCrawler):
                 
                 return "\n".join(content).strip()
 
-            job.description = extract_section_content(r"Mô tả công việc|Job Description")
-            job.requirements = extract_section_content(r"Yêu cầu công việc|Job Requirements|Requirements")
+            job.description = extract_section_content(r"^(Mô tả công việc|Job Description)$")
+            job.requirements = extract_section_content(r"^(Yêu cầu công việc|Job Requirements|Requirements)$")
 
             # Fallback
             if not job.description:
@@ -198,7 +199,7 @@ class VietnamWorksCrawler(BaseCrawler):
                 if req_el: job.requirements = req_el.get_text(separator="\n", strip=True)
 
             # --- Trích xuất từ bảng "Thông tin việc làm" ---
-            info_labels = soup.find_all(string=re.compile(r"^(CẤP BẬC|NGÀNH NGHỀ|KỸ NĂNG|LĨNH VỰC|SỐ NĂM KINH NGHIỆM TỐI THIỂU|HÌNH THỨC LÀM VIỆC|LOẠI HÌNH CÔNG VIỆC)$", re.IGNORECASE))
+            info_labels = soup.find_all(string=re.compile(r"^(CẤP BẬC|NGÀNH NGHỀ|KỸ NĂNG|LĨNH VỰC|SỐ NĂM KINH NGHIỆM TỐI THIỂU|HÌNH THỨC LÀM VIỆC|LOẠI HÌNH CÔNG VIỆC|LOẠI HÌNH LÀM VIỆC)$", re.IGNORECASE))
             for label in info_labels:
                 label_text = label.get_text(strip=True).upper()
                 container = label.find_parent(["div", "li"])
@@ -231,7 +232,7 @@ class VietnamWorksCrawler(BaseCrawler):
                         job.skills.append(st)
 
             # --- Địa điểm làm việc (Location) ---
-            loc_text = extract_section_content(r"Địa điểm làm việc|Địa điểm|Location|Work location", r"Từ khoá|Keywords")
+            loc_text = extract_section_content(r"^(Địa điểm làm việc|Địa điểm|Location|Work location)$", r"Từ khoá|Keywords")
             if loc_text and len(loc_text) > 5:
                 job.location = re.sub(r"[\n\r]+", ", ", loc_text).strip()
 
