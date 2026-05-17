@@ -151,7 +151,12 @@ class VietnamWorksCrawler(BaseCrawler):
 
             # --- Description & Requirements ---
             def extract_section_content(heading_regex, stop_regex=r"Yêu cầu công|Phúc lợi|Địa điểm|Từ khoá|Kỹ năng"):
-                heading = soup.find(string=re.compile(heading_regex, re.IGNORECASE))
+                headings = soup.find_all(string=re.compile(heading_regex, re.IGNORECASE))
+                heading = None
+                for h in headings:
+                    if len(h.strip()) < 35 and "tìm kiếm" not in h.lower() and "nhập" not in h.lower():
+                        heading = h
+                        break
                 if not heading: return ""
                 
                 # Leo lên DOM để tìm container chứa nội dung (có sibling)
@@ -193,7 +198,7 @@ class VietnamWorksCrawler(BaseCrawler):
                 if req_el: job.requirements = req_el.get_text(separator="\n", strip=True)
 
             # --- Trích xuất từ bảng "Thông tin việc làm" ---
-            info_labels = soup.find_all(string=re.compile(r"^(CẤP BẬC|NGÀNH NGHỀ|KỸ NĂNG|LĨNH VỰC|SỐ NĂM KINH NGHIỆM TỐI THIỂU)$", re.IGNORECASE))
+            info_labels = soup.find_all(string=re.compile(r"^(CẤP BẬC|NGÀNH NGHỀ|KỸ NĂNG|LĨNH VỰC|SỐ NĂM KINH NGHIỆM TỐI THIỂU|HÌNH THỨC LÀM VIỆC|LOẠI HÌNH CÔNG VIỆC)$", re.IGNORECASE))
             for label in info_labels:
                 label_text = label.get_text(strip=True).upper()
                 container = label.find_parent(["div", "li"])
@@ -213,6 +218,8 @@ class VietnamWorksCrawler(BaseCrawler):
                                 job.industry = val
                             elif "SỐ NĂM" in label_text:
                                 job.experience_year = val + " năm"
+                            elif "HÌNH THỨC" in label_text or "LOẠI HÌNH" in label_text:
+                                job.job_type = val
 
             # Quét Kỹ năng bằng tag HTML nếu bảng trên không có
             if job.skills is None:
