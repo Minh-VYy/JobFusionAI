@@ -67,7 +67,12 @@ FACEBOOK_GROUPS = [
 ]
 
 # Selector fallback system — thử theo thứ tự
-ARTICLE_SELECTORS = ["div[role='article']", "div[data-pagelet*='FeedUnit']", "div[data-ft]"]
+ARTICLE_SELECTORS = [
+    "div[role='article']", 
+    "div[data-pagelet*='FeedUnit']", 
+    "div[data-ft]",
+    "div[role='feed'] > div"
+]
 CONTENT_SELECTORS = [
     "div[data-ad-comet-preview='message']",
     "div[dir='auto']",
@@ -301,6 +306,7 @@ class FacebookCrawler:
                     "requirements":       getattr(job, "requirements", ""),
                     "job_url":            getattr(job, "job_url", ""),
                     "post_id":            getattr(job, "external_id", ""),
+                    "posted_date":        getattr(job, "posted_date", ""),
                     "source_group":       group_name,
                     "quality_score":      self.nlp.quality_score(desc),
                     # Normalized fields for cross-source future queries
@@ -407,9 +413,8 @@ class FacebookCrawler:
         logger.info("   ↓ Scrolling to load posts...")
         self._human_scroll(page)
 
-        # Upgrade #1: Expand "Xem thêm" trước khi extract
-        self._expand_see_more(page)
-        self._human_delay(2, 4)
+        # (Đã loại bỏ _expand_see_more toàn trang để tránh click nhầm thanh sidebar)
+        self._human_delay(1, 2)
 
         # Extract trực tiếp bằng locator (Upgrade #3)
         raw_posts = self._extract_posts_via_locator(page)
@@ -460,6 +465,12 @@ class FacebookCrawler:
         articles = self._find_articles(page)
         if articles is None:
             logger.warning("⚠️  No article selector worked for this page")
+            try:
+                os.makedirs("logs", exist_ok=True)
+                page.screenshot(path="logs/error_no_articles.png")
+                logger.warning("📸 Đã lưu ảnh màn hình lỗi tại logs/error_no_articles.png để kiểm tra")
+            except Exception as e:
+                logger.debug(f"Could not take screenshot: {e}")
             return []
 
         count = articles.count()
@@ -532,7 +543,12 @@ class FacebookCrawler:
         """Selector fallback: thử từng selector cho article container."""
         for selector in ARTICLE_SELECTORS:
             try:
+                # Chờ tối đa 5 giây cho selector xuất hiện
                 loc = page.locator(selector)
+                try:
+                    loc.first.wait_for(timeout=5000, state="attached")
+                except Exception:
+                    pass
                 if loc.count() > 0:
                     logger.debug(f"   ✓ Article selector: '{selector}' → {loc.count()} found")
                     return loc
@@ -694,7 +710,7 @@ class FacebookCrawler:
     @_retry(max_attempts=3, delay=0.8)
     def _click_with_retry(self, locator) -> bool:
         """Click với retry — Upgrade #5."""
-        locator.click(timeout=3000, force=False)
+        locator.click(timeout=3000, force=True)
         return True
 
     # ============================================================

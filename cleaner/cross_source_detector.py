@@ -149,12 +149,18 @@ class JobNormalizer:
                 return round(val / 1_000_000, 2)
             return round(val, 2)
 
-        # Case 1: k/h hoặc k/giờ → quy ra tháng
-        m = re.search(r'(\d+(?:\.\d+)?)\s*k\s*/\s*(?:h|gio|hour|gi)', text)
-        if m:
-            rate_k = float(m.group(1))        # nghìn/giờ
-            monthly_million = rate_k * 8 * 26 / 1000   # triệu/tháng (8h, 26 ngày)
-            return round(monthly_million * 0.85, 1), round(monthly_million * 1.15, 1)
+        # Case 1: k/h, k/giờ, khoảng k/h (VD: 20-25k/h, 20k/h)
+        # Giữ nguyên giá trị thực (triệu VNĐ), VD: 20k -> 0.02, để phân biệt với 20tr (20.0)
+        m_range = re.search(r'(\d+(?:\.\d+)?)\s*(?:k)?\s*[-–~đến]+\s*(\d+(?:\.\d+)?)\s*k\s*(?:/|\s+)?(?:h|gio|hour|gi|ca)', text)
+        if m_range:
+            lo = float(m_range.group(1)) / 1000.0
+            hi = float(m_range.group(2)) / 1000.0
+            return round(lo, 3), round(hi, 3)
+
+        m_single = re.search(r'(\d+(?:\.\d+)?)\s*k\s*(?:/|\s+)?(?:h|gio|hour|gi|ca)', text)
+        if m_single:
+            rate_k = float(m_single.group(1)) / 1000.0
+            return round(rate_k, 3), round(rate_k, 3)
 
         # Case 2: khoảng "5tr - 7tr" / "5~7tr" / "5 đến 7 triệu"
         m = re.search(
@@ -185,12 +191,17 @@ class JobNormalizer:
             if v > 0:
                 return v, v
 
-        # Case 5: khoảng k "20k - 30k" (đơn vị nghìn, không phải giờ)
-        m = re.search(r'(\d+)\s*k\s*[-–~]+\s*(\d+)\s*k', text)
+        # Case 5: khoảng k "20k - 30k" (đơn vị nghìn)
+        m = re.search(r'(\d+)\s*k\s*[-–~đến]+\s*(\d+)\s*k', text)
         if m:
             lo_k, hi_k = float(m.group(1)), float(m.group(2))
-            # Nếu < 1000k → đơn vị nghìn/ngày/ca, không quy tháng → skip
-            return 0.0, 0.0
+            return round(lo_k / 1000.0, 3), round(hi_k / 1000.0, 3)
+
+        # Case 6: đơn k "20k"
+        m = re.search(r'(\d+)\s*k\b', text)
+        if m:
+            val = float(m.group(1))
+            return round(val / 1000.0, 3), round(val / 1000.0, 3)
 
         return 0.0, 0.0
 

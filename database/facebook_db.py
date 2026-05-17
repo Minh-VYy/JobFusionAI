@@ -14,7 +14,7 @@ class FacebookDB:
     def __init__(self):
         self.conn_str = (
             f"DRIVER={{{os.getenv('DB_DRIVER', 'ODBC Driver 17 for SQL Server')}}};"
-            f"SERVER={os.getenv('DB_SERVER', r'localhost\SQLEXPRESS')};"
+            f"SERVER={os.getenv('DB_SERVER', r'localhost\MVY_350')};"
             f"DATABASE={os.getenv('DB_NAME', 'job_agent_db')};"
             f"UID={os.getenv('DB_USER', 'sa')};"
             f"PWD={os.getenv('DB_PASSWORD', '123456')};"
@@ -96,7 +96,8 @@ class FacebookDB:
                 normalized_title, normalized_location,
                 salary_min, salary_max, phone,
                 fingerprint_hash, source_type,
-                scraped_at
+                job_type, requirements,
+                posted_date, scraped_at
             )
             SELECT
                 ?, ?, ?,
@@ -107,7 +108,8 @@ class FacebookDB:
                 ?, ?,
                 ?, ?, ?,
                 ?, 'facebook',
-                GETUTCDATE()
+                ?, ?,
+                ?, GETUTCDATE()
             WHERE NOT EXISTS (
                 SELECT 1 FROM jobs
                 WHERE source_url = ?
@@ -130,6 +132,9 @@ class FacebookDB:
             job_data.get("salary_max", None),
             job_data.get("phone", "")[:50],
             fp_hash,
+            job_data.get("job_type", "")[:100],
+            job_data.get("requirements", ""),
+            job_data.get("posted_date", None) if job_data.get("posted_date") else None,
             # WHERE NOT EXISTS params
             job_url,
             post_id,
