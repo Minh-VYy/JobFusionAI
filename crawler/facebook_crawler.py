@@ -159,7 +159,7 @@ class FacebookCrawler:
     def __init__(
         self,
         max_posts_per_group: int = 5,
-        max_groups_per_session: int = 3,
+        max_groups_per_session: int = 1,
         hours_lookback: int = 24,
     ):
         self.max_posts  = max_posts_per_group
@@ -220,6 +220,9 @@ class FacebookCrawler:
             "skipped_db": 0, "inserted": 0, "errors": 0, "groups": {},
         }
 
+        # Set lưu fingerprint trong session — chống lưu 2 lần cùng phiên
+        session_fingerprints: set = set()
+
         with FacebookDB() as db:
             db.create_tables()
 
@@ -249,7 +252,14 @@ class FacebookCrawler:
                     g.setdefault("job_seeking", 0); g["job_seeking"] += 1
                     continue
 
-                # 2c. Same-source duplicate check (fast hash/phone/cosine)
+                # 2c. Session-level dedup (cùng phiên, tránh lưu 2 lần trong 1 lần chạy)
+                fp = getattr(job, "fingerprint", "") or ""
+                if fp and fp in session_fingerprints:
+                    logger.debug(f"♻️  SESSION-DUP [{group_name}]: fingerprint đã có trong phiên")
+                    stats["duplicate"] += 1; g["dup"] += 1
+                    continue
+
+                # 2d. Same-source duplicate check (fast hash/phone/cosine)
                 phone = getattr(job, "contact_phone", "") or ""
                 is_dup, method, sim = self.detector.is_duplicate(desc, phone)
                 if is_dup:
@@ -287,6 +297,8 @@ class FacebookCrawler:
                     "location":           getattr(job, "location", ""),
                     "skills":             ", ".join(getattr(job, "skills", []) or []),
                     "phone":              phone[:50],
+                    "job_type":           getattr(job, "job_type", ""),
+                    "requirements":       getattr(job, "requirements", ""),
                     "job_url":            getattr(job, "job_url", ""),
                     "post_id":            getattr(job, "external_id", ""),
                     "source_group":       group_name,
@@ -302,6 +314,8 @@ class FacebookCrawler:
                     ok = db.insert_facebook_job(job_data)
                     if ok:
                         stats["inserted"] += 1; g["inserted"] += 1
+                        if fp:
+                            session_fingerprints.add(fp)   # Đăng ký vào session cache
                         logger.debug(f"✅ INSERT [{group_name}]: {job_data['title'][:50]}")
                     else:
                         stats["skipped_db"] += 1
@@ -537,12 +551,12 @@ class FacebookCrawler:
 
         try:
             # ── Chiến lược 1: JS evaluate → text_content (bypass CSS visibility) ──
-            # text_content() đọc tất cả text trong DOM kể cả hidden elements
+            # Dùng JS lấy innerText để giữ nguyên xuống dòng (newline) quan trọng cho Regex
             full_text = article.evaluate("""el => {
                 const divs = el.querySelectorAll("div[dir='auto']");
                 let best = '';
                 for (const d of divs) {
-                    const t = (d.textContent || '').trim();
+                    const t = (d.innerText || '').trim();
                     if (t.length > best.length) best = t;
                 }
                 return best;
@@ -616,17 +630,36 @@ class FacebookCrawler:
             except Exception:
                 continue
 
-        # Time fallback
+        # Time — ưu tiên lấy aria-label của <abbr> chứa thời gian thực
         posted_time = ""
-        for sel in TIME_SELECTORS:
-            try:
-                el = article.locator(sel).first
-                if el.count() > 0:
-                    posted_time = el.inner_text(timeout=1000).strip()
-                    if posted_time:
-                        break
-            except Exception:
-                continue
+        try:
+            # Cách 1: abbr có aria-label (Facebook thường dùng cho timestamp)
+            time_els = article.locator("abbr[aria-label], abbr[data-utime], a[role='link'] abbr")
+            if time_els.count() > 0:
+                aria = time_els.first.get_attribute("aria-label", timeout=1500) or ""
+                data_utime = time_els.first.get_attribute("data-utime", timeout=500) or ""
+                if data_utime.isdigit():
+                    # Unix timestamp → datetime
+                    from datetime import timezone
+                    posted_time = datetime.fromtimestamp(int(data_utime), tz=timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+                elif aria:
+                    posted_time = aria  # vd: "17 May 2026 at 23:17"
+                else:
+                    posted_time = time_els.first.inner_text(timeout=1000).strip()
+        except Exception:
+            pass
+
+        if not posted_time:
+            for sel in TIME_SELECTORS:
+                try:
+                    el = article.locator(sel).first
+                    if el.count() > 0:
+                        aria = el.get_attribute("aria-label", timeout=500) or ""
+                        posted_time = aria or el.inner_text(timeout=1000).strip()
+                        if posted_time:
+                            break
+                except Exception:
+                    continue
 
         return {
             "content":     content,
@@ -757,8 +790,11 @@ class FacebookCrawler:
         job.location      = self.cleaner.extract_location(content)
         job.skills        = self.cleaner.extract_skills(content)
         job.contact_phone = self.cleaner.extract_phone(content)
+        job.job_type      = self.cleaner.extract_job_type(content)
+        job.requirements  = self.cleaner.extract_requirements(content)
         job.job_url       = post.get("post_url", "")
-        job.posted_date   = post.get("posted_time", "")
+        raw_time = post.get("posted_time", "")
+        job.posted_date   = self._parse_posted_time(raw_time)
         job.external_id   = post.get("post_id", "") or self._make_id(post.get("post_url", ""))
         job.fingerprint   = self.cleaner.make_fingerprint(content)
         job.group_id      = group.get("url", "unknown")
@@ -767,6 +803,80 @@ class FacebookCrawler:
 
     def _make_id(self, url: str) -> str:
         return hashlib.md5(url.encode()).hexdigest()[:16] if url else ""
+
+    def _parse_posted_time(self, raw: str) -> str:
+        """
+        Chuyển các dạng thời gian Facebook về 'YYYY-MM-DD HH:MM:SS'.
+        - "17 May 2026 at 23:17" → chuẩn hoá
+        - "17 phút", "44 phút", "1 giờ" → tính ngược từ now()
+        - "Đã chia sẻ 17 phút trước" → tương tự
+        """
+        import re
+        from datetime import timezone, timedelta
+        if not raw:
+            return ""
+
+        now = datetime.now()
+
+        # Dạng: "X phút" / "X phút trước"
+        m = re.search(r'(\d+)\s*ph[u\xfa]t', raw, re.IGNORECASE)
+        if m:
+            dt = now - timedelta(minutes=int(m.group(1)))
+            return dt.strftime("%Y-%m-%d %H:%M:%S")
+
+        # Dạng: "X giờ" / "X giờ trước"
+        m = re.search(r'(\d+)\s*gi[o\u1edd]', raw, re.IGNORECASE)
+        if m:
+            dt = now - timedelta(hours=int(m.group(1)))
+            return dt.strftime("%Y-%m-%d %H:%M:%S")
+
+        # Dạng: "X ngày" / "X ngày trước"
+        m = re.search(r'(\d+)\s*ng[a\xE0]y', raw, re.IGNORECASE)
+        if m:
+            dt = now - timedelta(days=int(m.group(1)))
+            return dt.strftime("%Y-%m-%d %H:%M:%S")
+
+        # Dạng: "May 17, 2026 at 11:41 PM" hoặc "17 May 2026 at 23:17"
+        # Regex extract linh hoạt hơn strptime
+        m = re.search(
+            r'(\w+\s+\d{1,2},?\s+\d{4})\s+at\s+(\d{1,2}:\d{2}(?:\s*[AP]M)?)',
+            raw, re.IGNORECASE
+        )
+        if m:
+            date_part = m.group(1).replace(',', '').strip()
+            time_part = m.group(2).strip().upper()
+            for fmt in ["%B %d %Y %I:%M %p", "%B %d %Y %H:%M",
+                        "%d %B %Y %I:%M %p", "%d %B %Y %H:%M"]:
+                try:
+                    return datetime.strptime(f"{date_part} {time_part}", fmt).strftime("%Y-%m-%d %H:%M:%S")
+                except ValueError:
+                    continue
+
+        # Dạng: "17 May 2026 at 23:17" (ngày trước, tháng sau — regex trên có thể miss)
+        m2 = re.search(
+            r'(\d{1,2}\s+\w+\s+\d{4})\s+at\s+(\d{1,2}:\d{2}(?:\s*[AP]M)?)',
+            raw, re.IGNORECASE
+        )
+        if m2:
+            date_part = m2.group(1).strip()
+            time_part = m2.group(2).strip().upper()
+            for fmt in ["%d %B %Y %I:%M %p", "%d %B %Y %H:%M"]:
+                try:
+                    return datetime.strptime(f"{date_part} {time_part}", fmt).strftime("%Y-%m-%d %H:%M:%S")
+                except ValueError:
+                    continue
+
+        # Dạng: "17 May 2026" hoặc "May 17, 2026" (không có giờ)
+        for fmt in ["%d %B %Y", "%B %d %Y", "%Y-%m-%d %H:%M:%S", "%Y-%m-%d"]:
+            try:
+                return datetime.strptime(raw.strip().replace(',', ''), fmt).strftime("%Y-%m-%d %H:%M:%S")
+            except ValueError:
+                continue
+
+        # Giữ nguyên nếu không parse được
+        return raw[:50]
+
+
 
     # ============================================================
     # FILTER
