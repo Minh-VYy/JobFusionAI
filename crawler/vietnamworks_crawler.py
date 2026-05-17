@@ -139,56 +139,69 @@ class VietnamWorksCrawler(BaseCrawler):
             soup = BeautifulSoup(detail_html, "lxml")
 
             # --- Description & Requirements ---
-            desc_parts = []
-            req_parts = []
+            # Dò tìm cấu trúc heading chuẩn xác của VietnamWorks
+            desc_text = ""
+            req_text = ""
             
-            for header in soup.find_all(["h2", "h3", "strong"]):
-                text = header.get_text(strip=True).lower()
-                parent = header.find_parent(["div", "section"])
-                if parent:
-                    content = parent.get_text(separator="\n", strip=True)
-                    if "mô tả" in text or "phúc lợi" in text or "quyền lợi" in text:
-                        if content not in desc_parts:
-                            desc_parts.append(content)
-                    elif "yêu cầu" in text or "kinh nghiệm" in text:
-                        if content not in req_parts:
-                            req_parts.append(content)
+            for section_title in ["Mô tả công việc", "Các phúc lợi dành cho bạn", "Job Description", "Benefits"]:
+                el = soup.find(string=re.compile(f"^{section_title}$", re.IGNORECASE))
+                if el:
+                    parent = el.find_parent(["h2", "h3", "div", "strong"])
+                    if parent:
+                        sib = parent.find_next_sibling(["div", "ul", "section"])
+                        if sib:
+                            desc_text += f"\n--- {section_title} ---\n" + sib.get_text(separator="\n", strip=True) + "\n"
 
-            if desc_parts:
-                job.description = "\n---\n".join(desc_parts)
-            if req_parts:
-                job.requirements = "\n---\n".join(req_parts)
+            for section_title in ["Yêu cầu công việc", "Job Requirements", "Requirements"]:
+                el = soup.find(string=re.compile(f"^{section_title}$", re.IGNORECASE))
+                if el:
+                    parent = el.find_parent(["h2", "h3", "div", "strong"])
+                    if parent:
+                        sib = parent.find_next_sibling(["div", "ul", "section"])
+                        if sib:
+                            req_text += f"\n--- {section_title} ---\n" + sib.get_text(separator="\n", strip=True) + "\n"
+            
+            if desc_text: job.description = desc_text.strip()
+            if req_text: job.requirements = req_text.strip()
 
             # Fallback
             if not job.description:
                 desc_el = soup.select_one("div[class*='description'], div[class*='job-description']")
-                if desc_el:
-                    job.description = desc_el.get_text(separator="\n", strip=True)
+                if desc_el: job.description = desc_el.get_text(separator="\n", strip=True)
             if not job.requirements:
                 req_el = soup.select_one("div[class*='requirement']")
-                if req_el:
-                    job.requirements = req_el.get_text(separator="\n", strip=True)
+                if req_el: job.requirements = req_el.get_text(separator="\n", strip=True)
 
-            # --- Ngành nghề (Industry) ---
-            for label in soup.find_all(string=re.compile(r"Ngành nghề|Lĩnh vực", re.IGNORECASE)):
-                text = label.get_text(strip=True).lower()
-                if len(text) > 20 or "top" in text or "tìm" in text or "việc làm" in text or "khác" in text:
-                    continue
-                parent = label.find_parent(["div", "li", "span", "td"])
-                if parent:
-                    sib = parent.find_next_sibling(["div", "p", "a", "span", "ul"]) or parent.select_one("a, span:not([class*='title'])")
-                    if sib:
-                        job.industry = sib.get_text(separator=", ", strip=True)
-                        break
+            # --- Trích xuất từ bảng "Thông tin việc làm" ---
+            info_labels = soup.find_all(string=re.compile(r"^(CẤP BẬC|NGÀNH NGHỀ|KỸ NĂNG|LĨNH VỰC|SỐ NĂM KINH NGHIỆM TỐI THIỂU)$", re.IGNORECASE))
+            for label in info_labels:
+                label_text = label.get_text(strip=True).upper()
+                container = label.find_parent(["div", "li"])
+                if container:
+                    parent_box = container.parent
+                    if parent_box:
+                        texts = [t for t in parent_box.stripped_strings]
+                        if len(texts) >= 2 and label_text in texts[0].upper():
+                            val = ", ".join(texts[1:])
+                            if "KỸ NĂNG" in label_text:
+                                if job.skills is None: job.skills = []
+                                for s in val.split(","):
+                                    st = s.strip()
+                                    if st and not any(st.lower() == us.lower() for us in job.skills):
+                                        job.skills.append(st)
+                            elif "NGÀNH NGHỀ" in label_text or "LĨNH VỰC" in label_text:
+                                job.industry = val
+                            elif "SỐ NĂM" in label_text:
+                                job.experience_year = val + " năm"
 
-            # --- Kỹ năng (Skills) ---
+            # Quét Kỹ năng bằng tag HTML nếu bảng trên không có
             if job.skills is None:
                 job.skills = []
-            skill_els = soup.select("span[class*='skill'], a[class*='skill'], span[class*='tag']")
-            for s in skill_els:
-                st = s.get_text(strip=True)
-                if st and len(st) > 1 and not any(st.lower() == us.lower() for us in job.skills):
-                    job.skills.append(st)
+                skill_els = soup.select("span[class*='skill'], a[class*='skill'], span[class*='tag']")
+                for s in skill_els:
+                    st = s.get_text(strip=True)
+                    if st and len(st) > 1 and not any(st.lower() == us.lower() for us in job.skills):
+                        job.skills.append(st)
 
             # --- Địa điểm làm việc (Location) ---
             loc_label = soup.find(string=re.compile(r"Địa điểm làm việc|Địa điểm|Location|Work location", re.IGNORECASE))
@@ -202,7 +215,7 @@ class VietnamWorksCrawler(BaseCrawler):
                             job.location = re.sub(r"^\-\s*", "", loc_text.strip())
 
             # Fallback cho Location dùng CSS Selector nếu label không ăn
-            if not job.location or "₫" in job.location or "tr/tháng" in job.location:
+            if not job.location or "₫" in job.location or "tr/tháng" in job.location or "tất cả" in job.location.lower():
                 loc_el = soup.select_one(".company-location, .job-location, .location, .address")
                 if loc_el:
                     ltext = loc_el.get_text(separator=", ", strip=True)
