@@ -102,6 +102,19 @@ class FacebookCleaner:
         if not lines:
             return ""
 
+        # Danh sách từ không bao giờ là tên công ty
+        COMPANY_BLACKLIST = {
+            'quán ăn', 'nhà hàng', 'cửa hàng', 'shop', 'cty', 'công ty',
+            'thành phố', 'trung tâm', 'khu vực', 'địa chỉ', 'địa điểm',
+            'đà nẵng', 'hà nội', 'hồ chí minh', 'bình dương',
+            'hải châu', 'cẩm lệ', 'ngũ hành sơn', 'liên chiểu', 'sơn trà',
+            'tuyển dụng', 'thông báo', 'khai trương',
+        }
+
+        def _is_blacklisted(name: str) -> bool:
+            name_l = name.lower().strip()
+            return name_l in COMPANY_BLACKLIST or any(b == name_l for b in COMPANY_BLACKLIST)
+
         # --- Bước 0: Dòng đầu là tên công ty, dòng 2 là "Tuyển..." ---
         # VD: "Chè Xuân Trang cs1 31 Lê Duẩn" / "Tuyển nhân viên"
         if len(lines) >= 2:
@@ -111,10 +124,11 @@ class FacebookCleaner:
                 candidate = self._clean_text(lines[0]).rstrip(':,').strip()
                 # Cắt bỏ phần địa chỉ ở cuối nếu có ("cs1 31 Lê Duẩn" → chỉ lấy tên)
                 name_only = re.split(r'\s+(?:cs\d+|cơ\s*sở\s*\d+|\d{2,4}\s+[A-ZÀ-ỹ])', candidate)[0].strip()
-                if 2 < len(name_only) < 100:
+                if 2 < len(name_only) < 100 and not _is_blacklisted(name_only):
                     return name_only
-                elif 2 < len(candidate) < 100:
+                elif 2 < len(candidate) < 100 and not _is_blacklisted(candidate):
                     return candidate
+
         # --- Bước 1: Tên cty/thương hiệu trước "cần tuyển/tuyển dụng" ---
         m = re.match(
             r'^(.{3,80}?)\s+(?:cần tuyển|tuyển dụng|tuyển gấp|tuyển|tìm đồng đội|thông báo)',
@@ -125,54 +139,62 @@ class FacebookCleaner:
             # Cắt bỏ động từ hành động thừa ở cuối
             company = re.sub(r'\s+(?:đang|cần|sẽ|vừa|mới)$', '', company, flags=re.IGNORECASE).strip()
             company = company.rstrip(":,")
-            # Phải là tên thực: ít nhất 2 từ, không phải từ đơn lẻ thông thường, không toàn số
             single_word_noise = {'cần', 'đang', 'sẽ', 'rất', 'hãy', 'và', 'có', 'là'}
             if (2 < len(company) < 100
                     and not re.match(r'^\d+$', company)
-                    and len(company.split()) >= 2
-                    and company.lower() not in single_word_noise):
+                    and company.lower() not in single_word_noise
+                    and not _is_blacklisted(company)):
                 return company
 
         # --- Bước 2: Prefix nhận diện loại hình ---
-        # Lưu ý: dùng negative lookbehind cho "trường" để tránh khớp "môi trường"
         prefix_pattern = re.compile(
             r'(?:nhà hàng|quán|shop|cửa hàng|công ty|cty|spa|salon|gym|'
             r'(?<!môi\s)trường(?!\s+trẻ)|trung tâm|khách sạn|resort|cafe|coffee|tiệm|xưởng|'
             r'công ty tnhh|công ty cp)\s+([^\n,]{3,80})',
             re.IGNORECASE
         )
-        m = prefix_pattern.search(content[:500])  # Chỉ tìm trong 500 ký tự đầu
+        m = prefix_pattern.search(content[:500])
         if m:
             start, end = m.start(1), m.end(1)
             name = self._clean_text(content[start:end]).strip().rstrip(":,")
-            # Cắt tại stop words
             name = re.split(r'\s+(?:cần|tuyển|đang|thông)', name, flags=re.IGNORECASE)[0]
-            if 2 < len(name) < 100:
+            if 2 < len(name) < 100 and not _is_blacklisted(name):
                 return name
 
         first_cleaned = self._clean_text(lines[0])
         # --- Bước 3: Dòng đầu viết hoa hoàn toàn VÀ ngắn = tên thương hiệu ---
-        # Không chấp nhận nếu bắt đầu bằng động từ tuyển dụng
         if (lines[0].isupper() and 3 < len(lines[0]) < 80
                 and len(lines[0].split()) <= 4
-                and not re.match(r'^(?:TUYỂN|CẦN|ĐANG)', lines[0].strip(), re.IGNORECASE)):
+                and not re.match(r'^(?:TUYỂN|CẦN|ĐANG|KHAI\s*TRƯƠNG|TẠI)', lines[0].strip(), re.IGNORECASE)
+                and not _is_blacklisted(first_cleaned)):
             return first_cleaned
 
-        # --- Bước 4: Fallback — kiểm tra dòng đầu là câu nhắn/cảm thán hay tên thực ---
+        # --- Bước 3b: Dòng đầu viết hoa có dạng "TÊN_CTY TUYỂN [CHỨC VỤ]" ---
+        # VD: "BUDWEISER TUYỂN PG PART-TIME" → lấy "BUDWEISER"
+        m3b = re.match(
+            r'^([\wÀ-ỹ&]{2,40})\s+(?:tuyển|cần|tìm)',
+            lines[0], re.IGNORECASE
+        )
+        if m3b:
+            candidate = m3b.group(1).strip()
+            if 2 < len(candidate) < 80 and not _is_blacklisted(candidate):
+                return self._clean_text(candidate)
+
+        # --- Bước 4: Fallback ---
         first_lower = lines[0].lower()
         non_company_signals = [
             'bạn ', 'các bạn', 'vậy ', 'ai ', 'hãy ', 'mình ', 'chúng ta',
             'cần ', 'ưu tiên', 'thông báo', 'nhận hồ sơ',
             'khi nào', 'như thế nào', 'thực sự', 'may mắn', 'nhận ra',
             'là khi', 'chần chờ', 'chờ gì', 'nhận ra mình', 'mom ',
-            'tuyển ', 'cần tuyển',
+            'tuyển ', 'cần tuyển', 'khai trương', 'tại đà nẵng',
+            'tại hà nội', 'tại tp', 'thị trường',
         ]
-        # Câu quá dài (> 5 từ) hoặc chứa dấu chấm cuối câu thường là câu mô tả
         is_descriptive = len(lines[0].split()) > 5 or lines[0].rstrip().endswith('.')
         if not any(sig in first_lower for sig in non_company_signals) and not is_descriptive:
             if len(lines[0]) < 80 and '?' not in lines[0]:
                 name = self._clean_text(lines[0]).strip()
-                if len(name.split()) >= 2:
+                if len(name.split()) >= 2 and not _is_blacklisted(name):
                     return name
 
         return ""
@@ -255,12 +277,27 @@ class FacebookCleaner:
         content = re.sub(r'\bcs(\d+)\b', r'cơ sở \1', content, flags=re.IGNORECASE)
         content_lower = content.lower()
 
+        # Helper: cắt bớt phần thừa (ngày giờ, liên hệ...)
+        def _clean_loc(raw: str) -> str:
+            # Cắt tại liên hệ/số điện thoại/xuống dòng
+            raw = re.split(r'(?:liên hệ|tel|sđt|hotline|zalo|0\d{9}|\n)', raw, flags=re.IGNORECASE)[0]
+            # Cắt tại ngày/giờ dạng "ngày dd/mm" hoặc "dd/mm"
+            raw = re.split(r'\s+(?:ngày\s*\d|\d{1,2}[/\-]\d{1,2})', raw, flags=re.IGNORECASE)[0]
+            # Cắt tại "giờ" nếu xuất hiện sau địa chỉ
+            raw = re.split(r'\s+\d+h\s*[-–]', raw)[0]
+            return raw.rstrip(",.;").strip()
+
+        # Danh sách quận/phường Đà Nẵng — nếu khớp thì ghép thêm "Đà Nẵng"
+        DANANG_DISTRICTS = [
+            'hải châu', 'cẩm lệ', 'ngũ hành sơn', 'liên chiểu', 'sơn trà', 'thanh khê',
+            'hoàng sa', 'hòa vang', 'hoà vang',
+        ]
+
         patterns = [
             r'địa\s*chỉ\s*(?:làm\s*việc)?[:\s]+([^\n]{5,150})',
             r'địa\s*điểm\s*(?:làm\s*việc)?[:\s]+([^\n]{5,150})',
             r'cơ\s*sở\s*\d*\s*[:\s]+([^\n]{5,100})',
             r'làm\s*việc\s*tại[:\s]+([^\n]{5,100})',
-            r'khu\s*vực[:\s]+([^\n]{5,80})',
             r'văn\s*phòng[:\s]+([^\n]{5,100})',
         ]
 
@@ -268,20 +305,44 @@ class FacebookCleaner:
             match = re.search(pattern, content_lower)
             if match:
                 loc = content[match.start(1):match.end(1)].strip()
-                # Cắt tại liên hệ/số điện thoại/xuống dòng
-                loc = re.split(r'(?:liên hệ|tel|sđt|hotline|0\d{9}|\n)', loc, flags=re.IGNORECASE)[0]
-                loc = loc.rstrip(",.;").strip()
+                loc = _clean_loc(loc)
                 if 5 < len(loc) < 200:
+                    # Ghép "Đà Nẵng" nếu chỉ có tên quận
+                    loc_l = loc.lower()
+                    if any(d in loc_l for d in DANANG_DISTRICTS) and 'đà nẵng' not in loc_l:
+                        loc = loc + ", Đà Nẵng"
                     return loc[:255]
 
-        # 3. Add 'tại số/tên đường' pattern to extract_location
+        # Khu vực tuyển (chỉ lấy phần "Đà Nẵng: ...")
+        kv_match = re.search(
+            r'khu\s*vực\s*(?:tuyển)?[:\s]+([\s\S]{5,500}?)(?=\n\s*(?:liên hệ|\#|$))',
+            content_lower
+        )
+        if kv_match:
+            kv_raw = content[kv_match.start(1):kv_match.end(1)]
+            # Tìm dòng có "Đà Nẵng:" trong toàn bộ khu vực tuyển
+            for kv_line in kv_raw.split('\n'):
+                dn_m = re.search(r'(?:đà\s*nẵng)[:\s•]*(.+)', kv_line, re.IGNORECASE)
+                if dn_m:
+                    loc = dn_m.group(1).strip().rstrip(",.;")
+                    loc = _clean_loc(loc)
+                    if 5 < len(loc) < 200:
+                        if 'đà nẵng' not in loc.lower():
+                            loc = loc + ", Đà Nẵng"
+                        return loc[:255]
+            # Fallback: lấy dòng đầu của khu vực
+            loc = _clean_loc(kv_raw.split('\n')[0])
+            if 5 < len(loc) < 200:
+                return loc[:255]
+
+        # 'tại [số nhà] [đường]'
         tai_match = re.search(
             r'tại\s+(\d+[^\n,\.]{5,80})',
             content_lower
         )
         if tai_match:
             loc = content[tai_match.start(1):tai_match.end(1)].strip()
-            loc = re.split(r'(?:liên hệ|tel|sđt|hotline|0\d{9}|\n|,)', loc, flags=re.IGNORECASE)[0].strip()
+            loc = _clean_loc(loc)
             if 5 < len(loc) < 150:
                 return loc
 
@@ -292,7 +353,8 @@ class FacebookCleaner:
         )
         if street_match:
             start = street_match.start(1)
-            return content[start:start + 120].strip()
+            raw = content[start:start + 120].strip()
+            return _clean_loc(raw)
 
         # Fallback: tên thành phố
         cities = {
