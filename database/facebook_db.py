@@ -251,4 +251,4 @@ class FacebookDB:
             return entities
         except Exception as e:
             logger.warning(f"get_verified_entities failed: {e}")
-            return entities
+            return entities

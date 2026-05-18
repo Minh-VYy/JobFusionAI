@@ -3,585 +3,408 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Admin Dashboard - JobAgent Đà Nẵng</title>
-  <meta name="description" content="Admin Dashboard - Quản lý hệ thống AI Agent tìm kiếm việc làm" />
+  <title>AI Job Recommendation — Admin Dashboard</title>
   <link rel="preconnect" href="https://fonts.googleapis.com" />
-  <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700;800&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="/static/admin.css" />
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600&family=Syne:wght@400;600;700;800&display=swap" rel="stylesheet" />
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+  <link rel="stylesheet" href="admin_dashboard.css" />
 </head>
 <body>
 
-<!-- ═══════════════════════════════════════════════
-     SIDEBAR ADMIN NAVIGATION
-════════════════════════════════════════════════ -->
-<aside class="admin-sidebar" id="admin-sidebar">
-  <div class="sidebar-header">
-    <div class="admin-brand">
+  <!-- SIDEBAR -->
+  <aside class="sidebar" id="sidebar">
+    <div class="sidebar-brand">
       <div class="brand-icon">
-        <svg viewBox="0 0 40 40" fill="none" xmlns="http://www.w3.org/2000/svg">
-          <circle cx="20" cy="20" r="18" stroke="url(#adminGrad)" stroke-width="2.5"/>
-          <path d="M12 20C12 15.5817 15.5817 12 20 12C24.4183 12 28 15.5817 28 20" stroke="url(#adminGrad)" stroke-width="2.5" stroke-linecap="round"/>
-          <circle cx="20" cy="24" r="3" fill="url(#adminGrad)"/>
-          <defs>
-            <linearGradient id="adminGrad" x1="8" y1="8" x2="32" y2="32" gradientUnits="userSpaceOnUse">
-              <stop stop-color="#6366f1"/>
-              <stop offset="1" stop-color="#06b6d4"/>
-            </linearGradient>
-          </defs>
+        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/>
         </svg>
       </div>
-      <div class="brand-text">
-        <span class="brand-main">JobAgent</span>
-        <span class="brand-sub">Admin Panel</span>
-      </div>
-    </div>
-    <div class="admin-badge">🔐 Admin</div>
-  </div>
-
-  <nav class="admin-nav">
-    <div class="nav-section">
-      <span class="nav-section-title">Tổng Quan</span>
-      <button class="nav-item active" onclick="showAdminPage('dashboard')" id="nav-dashboard">
-        <span class="nav-icon">📊</span><span>Dashboard</span>
-      </button>
-      <button class="nav-item" onclick="showAdminPage('monitor')" id="nav-monitor">
-        <span class="nav-icon">📡</span><span>Giám Sát Real-time</span>
-      </button>
-    </div>
-
-    <div class="nav-section">
-      <span class="nav-section-title">Quản Lý Dữ Liệu</span>
-      <button class="nav-item" onclick="showAdminPage('tasks')" id="nav-tasks">
-        <span class="nav-icon">⚙️</span><span>Scraping Tasks</span>
-      </button>
-      <button class="nav-item" onclick="showAdminPage('review')" id="nav-review">
-        <span class="nav-icon">🔎</span><span>Kiểm Duyệt
-          <span class="badge" id="review-badge">0</span>
-        </span>
-      </button>
-      <button class="nav-item" onclick="showAdminPage('analytics')" id="nav-analytics">
-        <span class="nav-icon">📈</span><span>Phân Tích & Báo Cáo</span>
-      </button>
-    </div>
-
-    <div class="nav-section">
-      <span class="nav-section-title">Hệ Thống</span>
-      <button class="nav-item" onclick="showAdminPage('graph')" id="nav-graph">
-        <span class="nav-icon">🕸️</span><span>Knowledge Graph</span>
-      </button>
-      <button class="nav-item" onclick="showAdminPage('settings')" id="nav-settings">
-        <span class="nav-icon">🔧</span><span>Cài Đặt</span>
-      </button>
-    </div>
-  </nav>
-
-  <div class="sidebar-footer">
-    <div class="admin-user">
-      <div class="user-avatar">👤</div>
-      <div class="user-info">
-        <span class="user-name" id="admin-username">Admin</span>
-        <span class="user-role">Administrator</span>
-      </div>
-    </div>
-    <div class="sidebar-actions">
-      <button class="btn btn-outline btn-sm btn-full" onclick="goToPublicSite()">
-        🌐 Xem Trang Public
-      </button>
-      <button class="btn btn-danger btn-sm btn-full" onclick="adminLogout()">
-        🚪 Đăng Xuất
-      </button>
-    </div>
-  </div>
-</aside>
-
-<!-- ═══════════════════════════════════════════════
-     MAIN ADMIN CONTENT
-════════════════════════════════════════════════ -->
-<main class="admin-main">
-
-  <!-- ══════════════════════════════════════════════
-       PAGE: DASHBOARD
-  ══════════════════════════════════════════════ -->
-  <div class="admin-page active" id="page-dashboard">
-    <div class="page-header">
       <div>
-        <h1 class="page-title">📊 Admin Dashboard</h1>
-        <p class="page-desc">Tổng quan hệ thống AI Agent Job Scraper</p>
-      </div>
-      <div class="header-actions">
-        <button class="btn btn-primary" onclick="refreshDashboard()">🔄 Làm Mới</button>
+        <div class="brand-name">AI·JobOps</div>
+        <div class="brand-sub">Admin Console</div>
       </div>
     </div>
 
-    <!-- Stats Grid -->
-    <div class="stats-grid">
-      <div class="stat-card">
-        <div class="stat-icon">📋</div>
-        <div class="stat-content">
-          <span class="stat-value" id="dash-total-jobs">—</span>
-          <span class="stat-label">Tổng việc làm</span>
-        </div>
-        <div class="stat-trend up">↑ 12%</div>
-      </div>
-      <div class="stat-card">
-        <div class="stat-icon">📍</div>
-        <div class="stat-content">
-          <span class="stat-value" id="dash-geocoded">—</span>
-          <span class="stat-label">Đã Geocoded</span>
-        </div>
-        <div class="stat-trend" id="dash-geo-rate">—%</div>
-      </div>
-      <div class="stat-card warning">
-        <div class="stat-icon">⚠️</div>
-        <div class="stat-content">
-          <span class="stat-value" id="dash-review">—</span>
-          <span class="stat-label">Cần Kiểm Duyệt</span>
-        </div>
-        <button class="btn btn-sm btn-warning" onclick="showAdminPage('review')">Xem ngay</button>
-      </div>
-      <div class="stat-card">
-        <div class="stat-icon">🤖</div>
-        <div class="stat-content">
-          <span class="stat-value" id="dash-active-tasks">—</span>
-          <span class="stat-label">Tasks Đang Chạy</span>
-        </div>
-        <div class="stat-status active">● Active</div>
-      </div>
-    </div>
+    <nav class="sidebar-nav">
+      <div class="nav-label">ĐIỀU KHIỂN</div>
+      <a href="#" class="nav-item active" data-tab="bots">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/><circle cx="12" cy="16" r="1"/></svg>
+        Bot Controller
+        <span class="nav-badge" id="badge-running">0</span>
+      </a>
+      <a href="#" class="nav-item" data-tab="review">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg>
+        Data Review
+        <span class="nav-badge pending" id="badge-pending">0</span>
+      </a>
+      <a href="#" class="nav-item" data-tab="analytics">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg>
+        Analytics
+      </a>
 
-    <!-- Quick Actions -->
-    <div class="quick-actions">
-      <h3>⚡ Thao Tác Nhanh</h3>
-      <div class="action-buttons">
-        <button class="action-btn" onclick="openCreateTaskModal()">
-          <span class="action-icon">➕</span>
-          <span class="action-text">Tạo Task Mới</span>
-        </button>
-        <button class="action-btn" onclick="showAdminPage('monitor')">
-          <span class="action-icon">📡</span>
-          <span class="action-text">Xem Giám Sát</span>
-        </button>
-        <button class="action-btn" onclick="runAllTasks()">
-          <span class="action-icon">▶️</span>
-          <span class="action-text">Chạy Tất Cả</span>
-        </button>
-        <button class="action-btn" onclick="exportData()">
-          <span class="action-icon">📥</span>
-          <span class="action-text">Xuất Dữ Liệu</span>
-        </button>
-      </div>
-    </div>
+      <div class="nav-label" style="margin-top:24px">HỆ THỐNG</div>
+      <a href="#" class="nav-item">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.07 4.93a10 10 0 0 1 0 14.14M4.93 4.93a10 10 0 0 0 0 14.14"/></svg>
+        API Monitor
+      </a>
+      <a href="#" class="nav-item">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
+        Accounts
+      </a>
+    </nav>
 
-    <!-- Recent Activity -->
-    <div class="dashboard-grid">
-      <div class="dashboard-card">
-        <h3>🕐 Hoạt Động Gần Đây</h3>
-        <div class="activity-list" id="recent-activity">
-          <div class="empty-state">Đang tải...</div>
+    <div class="sidebar-footer">
+      <div class="status-dot online"></div>
+      <span>API: <code>localhost:8000</code></span>
+    </div>
+  </aside>
+
+  <!-- MAIN CONTENT -->
+  <main class="main-content">
+
+    <!-- TOPBAR -->
+    <header class="topbar">
+      <div class="topbar-left">
+        <button class="sidebar-toggle" onclick="document.getElementById('sidebar').classList.toggle('collapsed')">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/></svg>
+        </button>
+        <div class="breadcrumb" id="breadcrumb">Bot Controller</div>
+      </div>
+      <div class="topbar-right">
+        <div class="clock" id="clock">--:--:--</div>
+        <button class="btn-refresh" onclick="refreshCurrentTab()" title="Refresh dữ liệu">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>
+        </button>
+        <div class="avatar">AD</div>
+      </div>
+    </header>
+
+    <!-- TOAST -->
+    <div class="toast-container" id="toastContainer"></div>
+
+    <!-- ======================== TAB 1: BOT CONTROLLER ======================== -->
+    <section class="tab-panel active" id="tab-bots">
+
+      <div class="section-header">
+        <h2 class="section-title">Bot Controller <span class="section-title-accent">& Monitoring</span></h2>
+        <p class="section-desc">Điều khiển lịch chạy và theo dõi tiến độ crawler bot theo thời gian thực.</p>
+      </div>
+
+      <!-- Emergency Commands -->
+      <div class="card emergency-card">
+        <div class="card-header">
+          <div class="card-title">
+            <span class="pulse-dot"></span>
+            Lệnh Cào Khẩn Cấp
+          </div>
+          <div class="card-subtitle">Kích hoạt bot chạy ngay lập tức, bỏ qua lịch đặt sẵn</div>
+        </div>
+        <div class="emergency-buttons">
+          <button class="btn-emergency fb" onclick="runBotNow('facebook')" id="btn-fb">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M24 12.073c0-6.627-5.373-12-12-12s-12 5.373-12 12c0 5.99 4.388 10.954 10.125 11.854v-8.385H7.078v-3.47h3.047V9.43c0-3.007 1.792-4.669 4.533-4.669 1.312 0 2.686.235 2.686.235v2.953H15.83c-1.491 0-1.956.925-1.956 1.874v2.25h3.328l-.532 3.47h-2.796v8.385C19.612 23.027 24 18.062 24 12.073z"/></svg>
+            Chạy Bot Facebook Ngay
+            <span class="btn-spinner" id="spinner-fb"></span>
+          </button>
+          <button class="btn-emergency topcv" onclick="runBotNow('topcv')" id="btn-topcv">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polygon points="10 8 16 12 10 16 10 8"/></svg>
+            Chạy Bot TopCV Ngay
+            <span class="btn-spinner" id="spinner-topcv"></span>
+          </button>
         </div>
       </div>
-      <div class="dashboard-card">
-        <h3>📈 Hiệu Suất 24h</h3>
-        <div class="performance-metrics" id="performance-metrics">
-          <div class="metric-row">
-            <span>Tốc độ cào</span>
-            <div class="metric-bar">
-              <div class="metric-fill" style="width: 75%"></div>
+
+      <!-- Schedule Config -->
+      <div class="card">
+        <div class="card-header">
+          <div class="card-title">Lịch Chạy Tự Động</div>
+          <div class="card-subtitle">Cài đặt chu kỳ chạy định kỳ cho từng bot</div>
+        </div>
+        <div class="schedule-grid">
+          <div class="schedule-item">
+            <label class="schedule-label">Facebook Crawler</label>
+            <div class="schedule-controls">
+              <select class="select-field" id="schedule-fb" onchange="updateSchedule('facebook', this.value)">
+                <option value="08:00">08:00 sáng</option>
+                <option value="12:00" selected>12:00 trưa</option>
+                <option value="18:00">18:00 chiều</option>
+                <option value="22:00">22:00 tối</option>
+                <option value="*/6h">Mỗi 6 tiếng</option>
+                <option value="*/12h">Mỗi 12 tiếng</option>
+              </select>
+              <div class="toggle-switch active" id="toggle-fb" onclick="toggleSchedule('facebook', this)">
+                <div class="toggle-knob"></div>
+              </div>
             </div>
-            <span class="metric-value">45 jobs/phút</span>
           </div>
-          <div class="metric-row">
-            <span>Tỷ lệ thành công</span>
-            <div class="metric-bar">
-              <div class="metric-fill success" style="width: 92%"></div>
+          <div class="schedule-item">
+            <label class="schedule-label">TopCV Crawler</label>
+            <div class="schedule-controls">
+              <select class="select-field" id="schedule-topcv" onchange="updateSchedule('topcv', this.value)">
+                <option value="08:00" selected>08:00 sáng</option>
+                <option value="12:00">12:00 trưa</option>
+                <option value="18:00">18:00 chiều</option>
+                <option value="22:00">22:00 tối</option>
+                <option value="*/6h">Mỗi 6 tiếng</option>
+                <option value="*/12h">Mỗi 12 tiếng</option>
+              </select>
+              <div class="toggle-switch" id="toggle-topcv" onclick="toggleSchedule('topcv', this)">
+                <div class="toggle-knob"></div>
+              </div>
             </div>
-            <span class="metric-value">92%</span>
-          </div>
-          <div class="metric-row">
-            <span>Lỗi geocoding</span>
-            <div class="metric-bar">
-              <div class="metric-fill error" style="width: 8%"></div>
-            </div>
-            <span class="metric-value">8%</span>
-          </div>
-        </div>
-      </div>
-    </div>
-  </div>
-
-  <!-- ══════════════════════════════════════════════
-       PAGE: MONITORING
-  ══════════════════════════════════════════════ -->
-  <div class="admin-page" id="page-monitor">
-    <div class="page-header">
-      <div>
-        <h1 class="page-title">📡 Real-time Monitoring</h1>
-        <p class="page-desc">Giám sát hoạt động AI Agents trong thời gian thực</p>
-      </div>
-      <div class="live-indicator">
-        <span class="pulse-dot"></span> LIVE
-      </div>
-    </div>
-
-    <div class="monitor-grid">
-      <div class="monitor-card log-card">
-        <h3>📋 Agent Activity Log</h3>
-        <div class="log-container" id="activity-log">
-          <div class="log-entry info">🟢 Hệ thống sẵn sàng. Đang chờ WebSocket...</div>
-        </div>
-      </div>
-
-      <div class="monitor-metrics">
-        <div class="metric-card">
-          <h4>Tốc độ cào</h4>
-          <div class="metric-value" id="scrape-speed">0</div>
-          <div class="metric-unit">jobs/phút</div>
-        </div>
-        <div class="metric-card">
-          <h4>Tỷ lệ Geocoding</h4>
-          <div class="metric-value" id="geo-rate">0%</div>
-          <div class="metric-unit">thành công</div>
-        </div>
-        <div class="metric-card">
-          <h4>Tỷ lệ lỗi</h4>
-          <div class="metric-value error" id="error-rate">0%</div>
-          <div class="metric-unit">tổng request</div>
-        </div>
-        <div class="metric-card">
-          <h4>Agents hoạt động</h4>
-          <div class="metric-value" id="active-agents">0</div>
-          <div class="metric-unit">threads</div>
-        </div>
-      </div>
-    </div>
-
-    <div class="scheduled-jobs">
-      <h3>📅 Lịch Trình Tự Động</h3>
-      <div id="scheduled-jobs-list">
-        <div class="empty-state">Chưa có lịch trình nào</div>
-      </div>
-    </div>
-  </div>
-
-  <!-- ══════════════════════════════════════════════
-       PAGE: SCRAPING TASKS
-  ══════════════════════════════════════════════ -->
-  <div class="admin-page" id="page-tasks">
-    <div class="page-header">
-      <div>
-        <h1 class="page-title">⚙️ Quản Lý Scraping Tasks</h1>
-        <p class="page-desc">Cấu hình và điều phối các AI Scraper Agents</p>
-      </div>
-      <button class="btn btn-primary" onclick="openCreateTaskModal()">
-        ➕ Tạo Task Mới
-      </button>
-    </div>
-
-    <!-- Tasks Stats -->
-    <div class="stats-grid compact">
-      <div class="stat-card mini">
-        <span class="stat-value" id="task-total">0</span>
-        <span class="stat-label">Tổng Tasks</span>
-      </div>
-      <div class="stat-card mini success">
-        <span class="stat-value" id="task-running">0</span>
-        <span class="stat-label">Đang Chạy</span>
-      </div>
-      <div class="stat-card mini">
-        <span class="stat-value" id="task-scheduled">0</span>
-        <span class="stat-label">Đã Lên Lịch</span>
-      </div>
-      <div class="stat-card mini error">
-        <span class="stat-value" id="task-error">0</span>
-        <span class="stat-label">Lỗi</span>
-      </div>
-    </div>
-
-    <!-- Tasks Table -->
-    <div class="data-card">
-      <div class="table-header">
-        <h3>Danh Sách Scraping Tasks</h3>
-        <div class="table-actions">
-          <input type="text" placeholder="Tìm kiếm task..." class="search-input" id="task-search" />
-          <button class="btn btn-outline btn-sm" onclick="loadTasks()">🔄 Làm Mới</button>
-        </div>
-      </div>
-      <div class="table-wrapper">
-        <table class="data-table" id="tasks-table">
-          <thead>
-            <tr>
-              <th>ID</th>
-              <th>Tên Task</th>
-              <th>Nguồn</th>
-              <th>Trạng thái</th>
-              <th>Lịch trình</th>
-              <th>Đã cào</th>
-              <th>Lỗi</th>
-              <th>Chạy lần cuối</th>
-              <th>Thao tác</th>
-            </tr>
-          </thead>
-          <tbody id="tasks-tbody">
-            <tr><td colspan="9" class="table-empty">Chưa có task nào</td></tr>
-          </tbody>
-        </table>
-      </div>
-    </div>
-  </div>
-
-  <!-- ══════════════════════════════════════════════
-       PAGE: REVIEW
-  ══════════════════════════════════════════════ -->
-  <div class="admin-page" id="page-review">
-    <div class="page-header">
-      <div>
-        <h1 class="page-title">🔎 Kiểm Duyệt Dữ Liệu</h1>
-        <p class="page-desc">Duyệt các việc làm được Reflection Agent đánh dấu nghi vấn</p>
-      </div>
-      <div class="header-actions">
-        <button class="btn btn-success" onclick="approveAll()">✅ Duyệt Tất Cả</button>
-        <button class="btn btn-outline" onclick="loadReviewJobs()">🔄 Làm Mới</button>
-      </div>
-    </div>
-
-    <div class="review-filters">
-      <button class="filter-btn active" data-filter="all">Tất cả</button>
-      <button class="filter-btn" data-filter="location">📍 Lỗi địa chỉ</button>
-      <button class="filter-btn" data-filter="salary">💰 Lỗi lương</button>
-      <button class="filter-btn" data-filter="duplicate">🔄 Trùng lặp</button>
-    </div>
-
-    <div id="review-jobs-list" class="review-list">
-      <div class="empty-state">
-        <div class="empty-icon">✅</div>
-        <p>Không có dữ liệu cần kiểm duyệt</p>
-      </div>
-    </div>
-  </div>
-
-  <!-- ══════════════════════════════════════════════
-       PAGE: ANALYTICS
-  ══════════════════════════════════════════════ -->
-  <div class="admin-page" id="page-analytics">
-    <div class="page-header">
-      <div>
-        <h1 class="page-title">📈 Analytics & Insights</h1>
-        <p class="page-desc">Báo cáo xu hướng tuyển dụng tại Đà Nẵng</p>
-      </div>
-      <div class="header-actions">
-        <select class="period-select" id="analytics-period">
-          <option value="7">7 ngày</option>
-          <option value="30">30 ngày</option>
-          <option value="90">3 tháng</option>
-        </select>
-        <button class="btn btn-primary" onclick="loadAnalytics()">🔄 Cập Nhật</button>
-        <button class="btn btn-outline" onclick="exportReport()">📥 Xuất Báo Cáo</button>
-      </div>
-    </div>
-
-    <div class="analytics-grid">
-      <div class="analytics-card wide">
-        <h3>🛠️ Top Kỹ Năng Đang Cần</h3>
-        <div id="skills-chart" class="bar-chart-container"></div>
-      </div>
-
-      <div class="analytics-card">
-        <h3>📊 Phân Bố Nguồn Tuyển Dụng</h3>
-        <div id="source-chart" class="donut-container"></div>
-      </div>
-
-      <div class="analytics-card">
-        <h3>📍 Phân Bố Theo Khoảng Cách</h3>
-        <div id="radius-chart" class="bar-chart-container"></div>
-      </div>
-
-      <div class="analytics-card">
-        <h3>💰 Thống Kê Lương</h3>
-        <div id="salary-stats" class="salary-stats-container"></div>
-      </div>
-
-      <div class="analytics-card wide">
-        <h3>📈 Xu Hướng Theo Thời Gian</h3>
-        <div id="trend-chart" class="trend-placeholder">
-          <p>Biểu đồ xu hướng sẽ hiển thị ở đây</p>
-        </div>
-      </div>
-    </div>
-  </div>
-
-  <!-- ══════════════════════════════════════════════
-       PAGE: KNOWLEDGE GRAPH
-  ══════════════════════════════════════════════ -->
-  <div class="admin-page" id="page-graph">
-    <div class="page-header">
-      <div>
-        <h1 class="page-title">🕸️ Knowledge Graph</h1>
-        <p class="page-desc">Đồ thị quan hệ giữa các kỹ năng công nghệ</p>
-      </div>
-      <div class="skill-search">
-        <input type="text" id="skill-search-input" placeholder="Tìm kỹ năng..." class="search-input" />
-        <button class="btn btn-primary" onclick="searchSkill()">Tìm</button>
-      </div>
-    </div>
-
-    <div class="graph-layout">
-      <div class="graph-container">
-        <canvas id="graph-canvas"></canvas>
-        <div class="graph-placeholder" id="graph-placeholder">
-          <div class="empty-icon">🕸️</div>
-          <p>Đang tải Knowledge Graph...</p>
-          <button class="btn btn-primary" onclick="loadKnowledgeGraph()">Tải Graph</button>
-        </div>
-      </div>
-
-      <div class="graph-sidebar" id="graph-detail">
-        <h3>Chi Tiết Kỹ Năng</h3>
-        <div id="skill-detail-content">
-          <p class="text-muted">Chọn một kỹ năng để xem quan hệ</p>
-        </div>
-      </div>
-    </div>
-  </div>
-
-  <!-- ══════════════════════════════════════════════
-       PAGE: SETTINGS
-  ══════════════════════════════════════════════ -->
-  <div class="admin-page" id="page-settings">
-    <div class="page-header">
-      <div>
-        <h1 class="page-title">🔧 Cài Đặt Hệ Thống</h1>
-        <p class="page-desc">Cấu hình và tùy chỉnh AI Agent System</p>
-      </div>
-    </div>
-
-    <div class="settings-grid">
-      <div class="settings-card">
-        <h3>⚙️ Cấu Hình Scraper</h3>
-        <div class="setting-item">
-          <label>Request Timeout (giây)</label>
-          <input type="number" value="30" class="setting-input" />
-        </div>
-        <div class="setting-item">
-          <label>Delay giữa các request (ms)</label>
-          <input type="number" value="1000" class="setting-input" />
-        </div>
-        <div class="setting-item">
-          <label>Max retry attempts</label>
-          <input type="number" value="3" class="setting-input" />
-        </div>
-      </div>
-
-      <div class="settings-card">
-        <h3>🗺️ Cấu Hình Geocoding</h3>
-        <div class="setting-item">
-          <label>API Key</label>
-          <input type="password" placeholder="••••••••" class="setting-input" />
-        </div>
-        <div class="setting-item">
-          <label>Default Center (lat, lng)</label>
-          <div class="coordinate-input">
-            <input type="number" value="16.0544" step="0.0001" />
-            <input type="number" value="108.2022" step="0.0001" />
           </div>
         </div>
       </div>
 
-      <div class="settings-card">
-        <h3>🔐 Bảo Mật</h3>
-        <div class="setting-item">
-          <label>Thay đổi mật khẩu Admin</label>
-          <input type="password" placeholder="Mật khẩu mới" class="setting-input" />
+      <!-- Tasks Table -->
+      <div class="card">
+        <div class="card-header">
+          <div class="card-title">Tiến Độ Chạy</div>
+          <div class="card-actions">
+            <button class="btn-sm" onclick="fetchTasks()">
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>
+              Refresh
+            </button>
+          </div>
         </div>
-        <div class="setting-item">
-          <label>Token Expiry (phút)</label>
-          <input type="number" value="60" class="setting-input" />
+        <div class="table-wrap">
+          <table class="data-table" id="tasks-table">
+            <thead>
+              <tr>
+                <th>Tên Bot</th>
+                <th>Trạng Thái</th>
+                <th>Jobs đã cào</th>
+                <th>Lần chạy cuối</th>
+                <th>Tiến độ</th>
+                <th>Thao tác</th>
+              </tr>
+            </thead>
+            <tbody id="tasks-tbody">
+              <tr><td colspan="6" class="table-loading"><div class="spinner"></div> Đang tải...</td></tr>
+            </tbody>
+          </table>
         </div>
       </div>
 
-      <div class="settings-card danger-zone">
-        <h3>⚠️ Danger Zone</h3>
-        <div class="danger-actions">
-          <button class="btn btn-danger" onclick="clearAllJobs()">🗑️ Xóa Tất Cả Việc Làm</button>
-          <button class="btn btn-danger" onclick="resetSystem()">🔄 Reset Hệ Thống</button>
-        </div>
-      </div>
-    </div>
-  </div>
+    </section>
 
-</main>
+    <!-- ======================== TAB 2: DATA REVIEW ======================== -->
+    <section class="tab-panel" id="tab-review">
 
-<!-- ═══════════════════════════════════════════════
-     MODALS
-════════════════════════════════════════════════ -->
-<!-- Create Task Modal -->
-<div class="modal-overlay" id="create-task-modal" onclick="if(event.target===this)closeModal('create-task-modal')">
-  <div class="modal">
-    <div class="modal-header">
-      <h2>➕ Tạo Scraping Task Mới</h2>
-      <button onclick="closeModal('create-task-modal')" class="modal-close">✕</button>
-    </div>
-    <form onsubmit="createTask(event)" class="modal-form">
-      <div class="form-group">
-        <label>Tên Task *</label>
-        <input type="text" id="task-name" required placeholder="VD: Cào VietnamWorks IT Jobs" class="input-field" />
+      <div class="section-header">
+        <h2 class="section-title">Data Review <span class="section-title-accent">& Active Learning</span></h2>
+        <p class="section-desc">Kiểm duyệt công việc đang chờ duyệt, chỉnh sửa để dạy lại AI (Active Learning).</p>
       </div>
-      <div class="form-row">
-        <div class="form-group">
-          <label>Nguồn *</label>
-          <select id="task-source" required class="input-field">
-            <option value="vietnamworks">VietnamWorks</option>
+
+      <!-- Filter Bar -->
+      <div class="card filter-bar">
+        <div class="filter-group">
+          <input type="text" class="input-field" placeholder="🔍 Tìm kiếm công việc..." id="search-jobs" oninput="filterJobs()" />
+          <select class="select-field" id="filter-source" onchange="filterJobs()">
+            <option value="">Tất cả nguồn</option>
+            <option value="facebook">Facebook</option>
             <option value="topcv">TopCV</option>
-            <option value="itviec">ITviec</option>
-            <option value="linkedin">LinkedIn</option>
-            <option value="other">Khác</option>
+            <option value="itviec">ITViec</option>
+          </select>
+          <select class="select-field" id="filter-status" onchange="filterJobs()">
+            <option value="pending">Pending</option>
+            <option value="approved">Approved</option>
+            <option value="rejected">Rejected</option>
           </select>
         </div>
-        <div class="form-group">
-          <label>Số trang tối đa</label>
-          <input type="number" id="task-pages" value="10" min="1" max="100" class="input-field" />
-        </div>
+        <div class="filter-stats" id="filter-stats">— bản ghi</div>
       </div>
-      <div class="form-group">
-        <label>Seed URL *</label>
-        <input type="url" id="task-url" required placeholder="https://www.topcv.vn/tim-viec-lam-it" class="input-field" />
-      </div>
-      <div class="form-group">
-        <label class="checkbox-label">
-          <input type="checkbox" id="task-scheduled" onchange="toggleSchedule(this)" />
-          <span>Lên lịch tự động</span>
-        </label>
-      </div>
-      <div class="form-group" id="cron-group" style="display:none">
-        <label>Cron Expression</label>
-        <input type="text" id="task-cron" placeholder="0 8 * * *" class="input-field" />
-        <div class="cron-presets">
-          <button type="button" class="btn btn-sm btn-outline" onclick="setCron('0 8 * * *')">Hàng ngày 8h</button>
-          <button type="button" class="btn btn-sm btn-outline" onclick="setCron('0 */6 * * *')">Mỗi 6h</button>
-          <button type="button" class="btn btn-sm btn-outline" onclick="setCron('0 8 * * 1')">Thứ 2 hàng tuần</button>
-        </div>
-      </div>
-      <div class="modal-actions">
-        <button type="button" class="btn btn-outline" onclick="closeModal('create-task-modal')">Hủy</button>
-        <button type="submit" class="btn btn-primary">🚀 Tạo & Chạy Ngay</button>
-      </div>
-    </form>
-  </div>
-</div>
 
-<!-- Job Detail Modal -->
-<div class="modal-overlay" id="job-detail-modal" onclick="if(event.target===this)closeModal('job-detail-modal')">
-  <div class="modal modal-large">
-    <div class="modal-header">
-      <h2 id="detail-title">Chi Tiết Việc Làm</h2>
-      <button onclick="closeModal('job-detail-modal')" class="modal-close">✕</button>
+      <!-- Jobs List -->
+      <div class="card">
+        <div class="table-wrap">
+          <table class="data-table" id="jobs-table">
+            <thead>
+              <tr>
+                <th>ID</th>
+                <th>Tiêu đề (AI)</th>
+                <th>Nguồn</th>
+                <th>Lương (AI)</th>
+                <th>Địa chỉ (AI)</th>
+                <th>Ngày cào</th>
+                <th>Trạng thái</th>
+                <th>Chi tiết</th>
+              </tr>
+            </thead>
+            <tbody id="jobs-tbody">
+              <tr><td colspan="8" class="table-loading"><div class="spinner"></div> Đang tải...</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+    </section>
+
+    <!-- ======================== TAB 3: ANALYTICS ======================== -->
+    <section class="tab-panel" id="tab-analytics">
+
+      <div class="section-header">
+        <h2 class="section-title">System <span class="section-title-accent">Analytics</span></h2>
+        <p class="section-desc">Tổng quan số liệu và hiệu suất của toàn hệ thống AI Job Recommendation.</p>
+      </div>
+
+      <!-- Stats Cards -->
+      <div class="stats-grid" id="stats-grid">
+        <div class="stat-card" data-key="active_jobs">
+          <div class="stat-icon jobs">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="7" width="20" height="14" rx="2" ry="2"/><path d="M16 21V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v16"/></svg>
+          </div>
+          <div class="stat-body">
+            <div class="stat-value" id="stat-jobs">—</div>
+            <div class="stat-label">Tổng Jobs Active</div>
+          </div>
+          <div class="stat-trend up">↑ 12%</div>
+        </div>
+        <div class="stat-card" data-key="active_users">
+          <div class="stat-icon users">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
+          </div>
+          <div class="stat-body">
+            <div class="stat-value" id="stat-users">—</div>
+            <div class="stat-label">Users Sẵn Sàng</div>
+          </div>
+          <div class="stat-trend up">↑ 8%</div>
+        </div>
+        <div class="stat-card" data-key="new_applications">
+          <div class="stat-icon apps">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07A19.5 19.5 0 0 1 4.69 12a19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 3.6 1.27h3a2 2 0 0 1 2 1.72c.127.96.361 1.903.7 2.81a2 2 0 0 1-.45 2.11L7.91 8.91a16 16 0 0 0 6 6l.91-.91a2 2 0 0 1 2.11-.45c.907.339 1.85.573 2.81.7A2 2 0 0 1 22 16.92z"/></svg>
+          </div>
+          <div class="stat-body">
+            <div class="stat-value" id="stat-apps">—</div>
+            <div class="stat-label">Ứng Tuyển Mới</div>
+          </div>
+          <div class="stat-trend up">↑ 23%</div>
+        </div>
+        <div class="stat-card" data-key="avg_rating">
+          <div class="stat-icon rating">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>
+          </div>
+          <div class="stat-body">
+            <div class="stat-value" id="stat-rating">—</div>
+            <div class="stat-label">Đánh Giá TB</div>
+          </div>
+          <div class="stat-trend neutral">→ 0%</div>
+        </div>
+      </div>
+
+      <!-- Charts Row -->
+      <div class="charts-row">
+        <div class="card chart-card">
+          <div class="card-header">
+            <div class="card-title">Tỷ Lệ Nguồn Job</div>
+            <div class="card-subtitle">Phân bổ dữ liệu theo nguồn crawler</div>
+          </div>
+          <div class="chart-container">
+            <canvas id="sourceChart"></canvas>
+          </div>
+          <div class="chart-legend" id="pie-legend"></div>
+        </div>
+
+        <div class="card chart-card">
+          <div class="card-header">
+            <div class="card-title">Jobs Theo Tuần</div>
+            <div class="card-subtitle">Số lượng job mới crawl được 7 ngày gần nhất</div>
+          </div>
+          <div class="chart-container">
+            <canvas id="weeklyChart"></canvas>
+          </div>
+        </div>
+      </div>
+
+    </section>
+
+  </main>
+
+  <!-- ======================== MODAL: JOB REVIEW ======================== -->
+  <div class="modal-overlay" id="reviewModal" onclick="closeModal(event)">
+    <div class="modal-box" onclick="event.stopPropagation()">
+      <div class="modal-header">
+        <div>
+          <div class="modal-title">Chi Tiết Công Việc</div>
+          <div class="modal-subtitle" id="modal-job-id">Job #—</div>
+        </div>
+        <button class="modal-close" onclick="closeReviewModal()">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+        </button>
+      </div>
+      <div class="modal-body">
+        <!-- Left: Raw content -->
+        <div class="modal-left">
+          <div class="raw-label">
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg>
+            Nội Dung Gốc (Bot Crawled)
+          </div>
+          <div class="raw-content" id="modal-raw-content">—</div>
+          <div class="raw-meta">
+            <span id="modal-source-badge" class="source-badge">—</span>
+            <span id="modal-crawled-at">Crawled: —</span>
+          </div>
+        </div>
+        <!-- Right: AI fields form -->
+        <div class="modal-right">
+          <div class="raw-label">
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/></svg>
+            Dữ Liệu AI Bóc Tách
+            <span class="ai-badge">AI</span>
+          </div>
+          <div class="form-group">
+            <label class="form-label">Tiêu đề công việc</label>
+            <input type="text" class="input-field" id="field-title" placeholder="Job title..." />
+          </div>
+          <div class="form-row">
+            <div class="form-group">
+              <label class="form-label">Lương MIN (VNĐ)</label>
+              <input type="number" class="input-field" id="field-salary-min" placeholder="5000000" />
+            </div>
+            <div class="form-group">
+              <label class="form-label">Lương MAX (VNĐ)</label>
+              <input type="number" class="input-field" id="field-salary-max" placeholder="15000000" />
+            </div>
+          </div>
+          <div class="form-group">
+            <label class="form-label">Địa chỉ làm việc</label>
+            <input type="text" class="input-field" id="field-location" placeholder="Thành phố, Quận..." />
+          </div>
+          <div class="form-group">
+            <label class="form-label">Kỹ năng yêu cầu</label>
+            <input type="text" class="input-field" id="field-skills" placeholder="React, Node.js, SQL..." />
+            <div class="form-hint">Phân cách bằng dấu phẩy</div>
+          </div>
+          <div class="form-group">
+            <label class="form-label">Kinh nghiệm</label>
+            <select class="select-field" id="field-experience">
+              <option value="">— Chưa xác định —</option>
+              <option value="0">Không yêu cầu</option>
+              <option value="1">1 năm</option>
+              <option value="2">2 năm</option>
+              <option value="3">3 năm</option>
+              <option value="5">5+ năm</option>
+            </select>
+          </div>
+          <!-- Diff indicator -->
+          <div class="diff-indicator" id="diff-indicator" style="display:none">
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+            Bạn đã chỉnh sửa — Hệ thống sẽ ghi nhận để dạy lại AI
+          </div>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn-reject" onclick="reviewJob('reject')" id="btn-reject">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/></svg>
+          Từ Chối (Spam/Lừa đảo)
+        </button>
+        <button class="btn-approve" onclick="reviewJob('approve')" id="btn-approve">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="20 6 9 17 4 12"/></svg>
+          Duyệt &amp; Dạy AI
+        </button>
+      </div>
     </div>
-    <div id="job-detail-content" class="job-detail-body"></div>
   </div>
-</div>
 
-<!-- Toast Notification -->
-<div id="toast" class="toast"></div>
-
-<script src="/static/admin.js"></script>
+  <script src="admin_dashboard.js"></script>
 </body>
 </html>

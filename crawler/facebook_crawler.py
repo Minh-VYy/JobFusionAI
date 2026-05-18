@@ -3,6 +3,7 @@
 Production-stable Facebook Group Job Crawler.
 Upgrades: See More, Incremental, Selector Fallback, Retry, Persistent Cache, Logging
 """
+
 import time
 import random
 import logging
@@ -21,6 +22,7 @@ from cleaner.facebook_nlp import FacebookNLP
 from cleaner.duplicate_detector import DuplicateDetector
 from cleaner.cross_source_detector import CrossSourceDetector
 from database.facebook_db import FacebookDB
+
 
 # ================================================================
 # LOGGING — File riêng + Console
@@ -49,29 +51,75 @@ def _setup_logger() -> logging.Logger:
     log.addHandler(fh)
     return log
 
+
 logger = _setup_logger()
 
 # ================================================================
 # CONFIG
 # ================================================================
 FACEBOOK_GROUPS = [
-    {"name": "VIỆC LÀM THỜI VỤ ĐÀ NẴNG GROUP",       "url": "https://www.facebook.com/groups/358744117181132", "trust_score": 0.85, "priority": "high"},
-    {"name": "Tìm kiếm việc làm tại Đà Nẵng",          "url": "https://www.facebook.com/groups/422673553710542", "trust_score": 0.80, "priority": "high"},
-    {"name": "VIỆC LÀM PHỤC VỤ PHA CHẾ ĐÀ NẴNG",     "url": "https://www.facebook.com/groups/363005460084694", "trust_score": 0.90, "priority": "high"},
-    {"name": "Việc làm Đà Nẵng full/part-time SV",     "url": "https://www.facebook.com/groups/360683986995278", "trust_score": 0.80, "priority": "medium"},
-    {"name": "Hội Tìm Việc Làm Thêm SV Đà Nẵng",      "url": "https://www.facebook.com/groups/360978689839999", "trust_score": 0.75, "priority": "medium"},
-    {"name": "Hội Việc Làm Đà Nẵng - Viec Lam Da Nang","url": "https://www.facebook.com/groups/471999991646484", "trust_score": 0.85, "priority": "high"},
-    {"name": "VIỆC LÀM - ĐÀ NẴNG",                    "url": "https://www.facebook.com/groups/444340500105671", "trust_score": 0.90, "priority": "high"},
-    {"name": "Việc Làm Đà Nẵng",                       "url": "https://www.facebook.com/groups/sieuthiphuyen78",  "trust_score": 0.80, "priority": "high"},
-    {"name": "Hội Tìm Việc Làm Thêm Cho SV Đà Nẵng",  "url": "https://www.facebook.com/groups/thichlamthemcom","trust_score": 0.80, "priority": "medium"},
+    {
+        "name": "VIỆC LÀM THỜI VỤ ĐÀ NẴNG GROUP",
+        "url": "https://www.facebook.com/groups/358744117181132",
+        "trust_score": 0.85,
+        "priority": "high",
+    },
+    {
+        "name": "Tìm kiếm việc làm tại Đà Nẵng",
+        "url": "https://www.facebook.com/groups/422673553710542",
+        "trust_score": 0.80,
+        "priority": "high",
+    },
+    {
+        "name": "VIỆC LÀM PHỤC VỤ PHA CHẾ ĐÀ NẴNG",
+        "url": "https://www.facebook.com/groups/363005460084694",
+        "trust_score": 0.90,
+        "priority": "high",
+    },
+    {
+        "name": "Việc làm Đà Nẵng full/part-time SV",
+        "url": "https://www.facebook.com/groups/360683986995278",
+        "trust_score": 0.80,
+        "priority": "medium",
+    },
+    {
+        "name": "Hội Tìm Việc Làm Thêm SV Đà Nẵng",
+        "url": "https://www.facebook.com/groups/360978689839999",
+        "trust_score": 0.75,
+        "priority": "medium",
+    },
+    {
+        "name": "Hội Việc Làm Đà Nẵng - Viec Lam Da Nang",
+        "url": "https://www.facebook.com/groups/471999991646484",
+        "trust_score": 0.85,
+        "priority": "high",
+    },
+    {
+        "name": "VIỆC LÀM - ĐÀ NẴNG",
+        "url": "https://www.facebook.com/groups/444340500105671",
+        "trust_score": 0.90,
+        "priority": "high",
+    },
+    {
+        "name": "Việc Làm Đà Nẵng",
+        "url": "https://www.facebook.com/groups/sieuthiphuyen78",
+        "trust_score": 0.80,
+        "priority": "high",
+    },
+    {
+        "name": "Hội Tìm Việc Làm Thêm Cho SV Đà Nẵng",
+        "url": "https://www.facebook.com/groups/thichlamthemcom",
+        "trust_score": 0.80,
+        "priority": "medium",
+    },
 ]
 
 # Selector fallback system — thử theo thứ tự
 ARTICLE_SELECTORS = [
-    "div[role='article']", 
-    "div[data-pagelet*='FeedUnit']", 
+    "div[role='article']",
+    "div[data-pagelet*='FeedUnit']",
     "div[data-ft]",
-    "div[role='feed'] > div"
+    "div[role='feed'] > div",
 ]
 CONTENT_SELECTORS = [
     "div[data-ad-comet-preview='message']",
@@ -79,20 +127,50 @@ CONTENT_SELECTORS = [
     "div[data-ad-preview='message']",
     "div[role='article'] div[dir='auto']",
 ]
-LINK_SELECTORS    = ["a[href*='permalink']", "a[href*='/posts/']", "a[role='link'][href*='groups']"]
-TIME_SELECTORS    = ["abbr", "span[role='link']", "a[role='link'] span"]
-AUTHOR_SELECTORS  = ["strong a", "a[role='link'] strong", "span[dir='auto'] a[role='link']"]
-SEE_MORE_TEXTS    = ["Xem thêm", "See more", "Xem thêm nội dung"]
+LINK_SELECTORS = [
+    "a[href*='permalink']",
+    "a[href*='/posts/']",
+    "a[role='link'][href*='groups']",
+]
+TIME_SELECTORS = ["abbr", "span[role='link']", "a[role='link'] span"]
+AUTHOR_SELECTORS = [
+    "strong a",
+    "a[role='link'] strong",
+    "span[dir='auto'] a[role='link']",
+]
+SEE_MORE_TEXTS = ["Xem thêm", "See more", "Xem thêm nội dung"]
 
 RECRUITMENT_KEYWORDS = [
-    "tuyển", "tuyển dụng", "tuyển gấp", "cần tuyển", "cần người", "việc làm",
-    "part-time", "full-time", "parttime", "fulltime", "lương", "thu nhập",
-    "ca tối", "ca ngày", "phục vụ", "shipper", "bán hàng", "nhân viên",
-    "thực tập sinh", "fresher", "cộng tác viên",
+    "tuyển",
+    "tuyển dụng",
+    "tuyển gấp",
+    "cần tuyển",
+    "cần người",
+    "việc làm",
+    "part-time",
+    "full-time",
+    "parttime",
+    "fulltime",
+    "lương",
+    "thu nhập",
+    "ca tối",
+    "ca ngày",
+    "phục vụ",
+    "shipper",
+    "bán hàng",
+    "nhân viên",
+    "thực tập sinh",
+    "fresher",
+    "cộng tác viên",
 ]
 SPAM_KEYWORDS = [
-    "thu nhập khủng", "việc nhẹ lương cao", "không cần kinh nghiệm, thu nhập",
-    "đa cấp", "cọc tiền", "tuyển ctv online không cần làm việc", "kiếm tiền tại nhà",
+    "thu nhập khủng",
+    "việc nhẹ lương cao",
+    "không cần kinh nghiệm, thu nhập",
+    "đa cấp",
+    "cọc tiền",
+    "tuyển ctv online không cần làm việc",
+    "kiếm tiền tại nhà",
 ]
 
 # Incremental state file
@@ -104,6 +182,7 @@ STATE_FILE = "data/fb_crawl_state.json"
 # ================================================================
 def _retry(max_attempts: int = 3, delay: float = 1.5):
     """Decorator: retry một function nếu nó raise exception."""
+
     def decorator(fn):
         def wrapper(*args, **kwargs):
             for attempt in range(1, max_attempts + 1):
@@ -111,11 +190,17 @@ def _retry(max_attempts: int = 3, delay: float = 1.5):
                     return fn(*args, **kwargs)
                 except Exception as e:
                     if attempt == max_attempts:
-                        logger.warning(f"[retry] {fn.__name__} failed after {max_attempts} attempts: {e}")
+                        logger.warning(
+                            f"[retry] {fn.__name__} failed after {max_attempts} attempts: {e}"
+                        )
                         return None
-                    logger.debug(f"[retry] {fn.__name__} attempt {attempt} failed: {e} — retrying...")
+                    logger.debug(
+                        f"[retry] {fn.__name__} attempt {attempt} failed: {e} — retrying..."
+                    )
                     time.sleep(delay * attempt)
+
         return wrapper
+
     return decorator
 
 
@@ -167,15 +252,15 @@ class FacebookCrawler:
         max_groups_per_session: int = 1,
         hours_lookback: int = 24,
     ):
-        self.max_posts  = max_posts_per_group
+        self.max_posts = max_posts_per_group
         self.max_groups = max_groups_per_session
         self.hours_lookback = hours_lookback
 
-        self.cleaner      = FacebookCleaner()
-        self.nlp          = FacebookNLP()
-        self.detector     = DuplicateDetector(similarity_threshold=0.85)
-        self.cross_det    = CrossSourceDetector(threshold=0.85)  # Cross-source
-        self.state        = CrawlStateManager()
+        self.cleaner = FacebookCleaner()
+        self.nlp = FacebookNLP()
+        self.detector = DuplicateDetector(similarity_threshold=0.85)
+        self.cross_det = CrossSourceDetector(threshold=0.85)  # Cross-source
+        self.state = CrawlStateManager()
         self.jobs: List[JobModel] = []
 
         # Persistent caches
@@ -193,11 +278,14 @@ class FacebookCrawler:
         try:
             with FacebookDB() as db:
                 self.verified_entities = db.get_verified_entities()
-                total_learned = len(self.verified_entities.get("phone", {})) + len(self.verified_entities.get("address", {}))
-                logger.info(f"🧠 [Active-Learning] Loaded {total_learned} verified entities from DB loop.")
+                total_learned = len(self.verified_entities.get("phone", {})) + len(
+                    self.verified_entities.get("address", {})
+                )
+                logger.info(
+                    f"🧠 [Active-Learning] Loaded {total_learned} verified entities from DB loop."
+                )
         except Exception as e:
             logger.warning(f"Failed to load verified entities: {e}")
-
 
     def _load_fingerprints_from_db(self):
         """Load fingerprints từ DB để DuplicateDetector nhớ bài cũ sau restart."""
@@ -207,7 +295,9 @@ class FacebookCrawler:
                 fingerprints = db.get_all_fingerprints()
                 if fingerprints:
                     self.detector.load_existing(fingerprints)
-                    logger.info(f"[cache] Loaded {len(fingerprints)} fingerprints from DB")
+                    logger.info(
+                        f"[cache] Loaded {len(fingerprints)} fingerprints from DB"
+                    )
         except Exception as e:
             logger.warning(f"[cache] Could not load fingerprints: {e}")
 
@@ -230,12 +320,25 @@ class FacebookCrawler:
         """Pipeline hoàn chỉnh: Crawl → NLP Spam → Duplicate → DB → Trust Score."""
         raw_jobs = self.crawl()
         if not raw_jobs:
-            return {"total": 0, "spam": 0, "duplicate": 0, "skipped_db": 0, "inserted": 0, "errors": 0}
+            return {
+                "total": 0,
+                "spam": 0,
+                "duplicate": 0,
+                "skipped_db": 0,
+                "inserted": 0,
+                "errors": 0,
+            }
 
         stats = {
-            "total": len(raw_jobs), "spam": 0, "duplicate": 0,
-            "cross_dup": 0, "job_seeking": 0,
-            "skipped_db": 0, "inserted": 0, "errors": 0, "groups": {},
+            "total": len(raw_jobs),
+            "spam": 0,
+            "duplicate": 0,
+            "cross_dup": 0,
+            "job_seeking": 0,
+            "skipped_db": 0,
+            "inserted": 0,
+            "errors": 0,
+            "groups": {},
         }
 
         # Set lưu fingerprint trong session — chống lưu 2 lần cùng phiên
@@ -245,11 +348,17 @@ class FacebookCrawler:
             db.create_tables()
 
             for job in raw_jobs:
-                group_id   = getattr(job, "group_id",   "unknown")
+                group_id = getattr(job, "group_id", "unknown")
                 group_name = getattr(job, "group_name", "unknown")
 
                 if group_id not in stats["groups"]:
-                    stats["groups"][group_id] = {"name": group_name, "total": 0, "spam": 0, "dup": 0, "inserted": 0}
+                    stats["groups"][group_id] = {
+                        "name": group_name,
+                        "total": 0,
+                        "spam": 0,
+                        "dup": 0,
+                        "inserted": 0,
+                    }
                 g = stats["groups"][group_id]
                 g["total"] += 1
 
@@ -259,7 +368,8 @@ class FacebookCrawler:
                 is_spam, _, reason = self.nlp.is_spam(desc)
                 if is_spam:
                     logger.debug(f"🚫 SPAM [{group_name}]: {reason[:60]}")
-                    stats["spam"] += 1; g["spam"] += 1
+                    stats["spam"] += 1
+                    g["spam"] += 1
                     continue
 
                 # 2b. Post-type check: lọc bài TÌM VIỆC
@@ -267,14 +377,18 @@ class FacebookCrawler:
                 if not is_recruiting:
                     logger.debug(f"🔍 JOB_SEEKING [{group_name}]: {type_reason[:80]}")
                     stats["job_seeking"] += 1
-                    g.setdefault("job_seeking", 0); g["job_seeking"] += 1
+                    g.setdefault("job_seeking", 0)
+                    g["job_seeking"] += 1
                     continue
 
                 # 2c. Session-level dedup (cùng phiên, tránh lưu 2 lần trong 1 lần chạy)
                 fp = getattr(job, "fingerprint", "") or ""
                 if fp and fp in session_fingerprints:
-                    logger.debug(f"♻️  SESSION-DUP [{group_name}]: fingerprint đã có trong phiên")
-                    stats["duplicate"] += 1; g["dup"] += 1
+                    logger.debug(
+                        f"♻️  SESSION-DUP [{group_name}]: fingerprint đã có trong phiên"
+                    )
+                    stats["duplicate"] += 1
+                    g["dup"] += 1
                     continue
 
                 # 2d. Same-source duplicate check (fast hash/phone/cosine)
@@ -282,60 +396,69 @@ class FacebookCrawler:
                 is_dup, method, sim = self.detector.is_duplicate(desc, phone)
                 if is_dup:
                     logger.debug(f"♻️  DUP [{group_name}]: {method} sim={sim:.2f}")
-                    stats["duplicate"] += 1; g["dup"] += 1
+                    stats["duplicate"] += 1
+                    g["dup"] += 1
                     continue
 
                 # 2d. Extract normalized features cho cross-source check
                 job_dict = {
-                    "job_id":      getattr(job, "external_id", ""),
-                    "source":      "facebook",
-                    "title":       getattr(job, "title", ""),
-                    "company":     getattr(job, "company", ""),
-                    "location":    getattr(job, "location", ""),
-                    "salary":      getattr(job, "salary", ""),
-                    "phone":       phone,
+                    "job_id": getattr(job, "external_id", ""),
+                    "source": "facebook",
+                    "title": getattr(job, "title", ""),
+                    "company": getattr(job, "company", ""),
+                    "location": getattr(job, "location", ""),
+                    "salary": getattr(job, "salary", ""),
+                    "phone": phone,
                     "description": desc,
                 }
                 features = self.cross_det.extract_features(job_dict)
 
                 # 2e. Cross-source duplicate check
-                is_cross_dup, cross_score, matched_id = self.cross_det.is_duplicate(job_dict)
+                is_cross_dup, cross_score, matched_id = self.cross_det.is_duplicate(
+                    job_dict
+                )
                 if is_cross_dup:
-                    logger.debug(f"🔀 CROSS-DUP [{group_name}]: score={cross_score:.2f} vs {matched_id}")
+                    logger.debug(
+                        f"🔀 CROSS-DUP [{group_name}]: score={cross_score:.2f} vs {matched_id}"
+                    )
                     stats["cross_dup"] += 1
-                    g.setdefault("cross_dup", 0); g["cross_dup"] += 1
+                    g.setdefault("cross_dup", 0)
+                    g["cross_dup"] += 1
                     continue
 
                 # 2f. Insert — enriched với normalized fields
                 job_data = {
-                    "title":              getattr(job, "title", ""),
-                    "company":            getattr(job, "company", ""),
-                    "description":        desc,
-                    "salary":             getattr(job, "salary", ""),
-                    "location":           getattr(job, "location", ""),
-                    "skills":             ", ".join(getattr(job, "skills", []) or []),
-                    "phone":              phone[:50],
-                    "job_type":           getattr(job, "job_type", ""),
-                    "requirements":       getattr(job, "requirements", ""),
-                    "job_url":            getattr(job, "job_url", ""),
-                    "post_id":            getattr(job, "external_id", ""),
-                    "posted_date":        getattr(job, "posted_date", ""),
-                    "source_group":       group_name,
-                    "quality_score":      self.nlp.quality_score(desc),
+                    "title": getattr(job, "title", ""),
+                    "company": getattr(job, "company", ""),
+                    "description": desc,
+                    "salary": getattr(job, "salary", ""),
+                    "location": getattr(job, "location", ""),
+                    "skills": ", ".join(getattr(job, "skills", []) or []),
+                    "phone": phone[:50],
+                    "job_type": getattr(job, "job_type", ""),
+                    "requirements": getattr(job, "requirements", ""),
+                    "job_url": getattr(job, "job_url", ""),
+                    "post_id": getattr(job, "external_id", ""),
+                    "posted_date": getattr(job, "posted_date", ""),
+                    "source_group": group_name,
+                    "quality_score": self.nlp.quality_score(desc),
                     # Normalized fields for cross-source future queries
-                    "normalized_title":   features.norm_title,
+                    "normalized_title": features.norm_title,
                     "normalized_location": features.norm_location,
-                    "salary_min":         features.salary_min or None,
-                    "salary_max":         features.salary_max or None,
-                    "fingerprint_hash":   features.fingerprint,
+                    "salary_min": features.salary_min or None,
+                    "salary_max": features.salary_max or None,
+                    "fingerprint_hash": features.fingerprint,
                 }
                 try:
                     ok = db.insert_facebook_job(job_data)
                     if ok:
-                        stats["inserted"] += 1; g["inserted"] += 1
+                        stats["inserted"] += 1
+                        g["inserted"] += 1
                         if fp:
-                            session_fingerprints.add(fp)   # Đăng ký vào session cache
-                        logger.debug(f"✅ INSERT [{group_name}]: {job_data['title'][:50]}")
+                            session_fingerprints.add(fp)  # Đăng ký vào session cache
+                        logger.debug(
+                            f"✅ INSERT [{group_name}]: {job_data['title'][:50]}"
+                        )
                     else:
                         stats["skipped_db"] += 1
                 except Exception as e:
@@ -347,16 +470,24 @@ class FacebookCrawler:
                 if g["total"] == 0:
                     continue
                 spam_r = g["spam"] / g["total"]
-                dup_r  = g["dup"]  / g["total"]
-                trust  = round(1.0 - spam_r * 0.5 - dup_r * 0.3, 2)
-                pri    = "high" if trust > 0.7 else "normal" if trust > 0.4 else "low"
+                dup_r = g["dup"] / g["total"]
+                trust = round(1.0 - spam_r * 0.5 - dup_r * 0.3, 2)
+                pri = "high" if trust > 0.7 else "normal" if trust > 0.4 else "low"
                 try:
-                    db.upsert_group({
-                        "group_id": gid, "group_name": g["name"], "group_url": gid,
-                        "trust_score": trust, "spam_ratio": round(spam_r, 3),
-                        "duplicate_ratio": round(dup_r, 3), "crawl_priority": pri,
-                        "total_crawled": g["total"], "total_spam": g["spam"], "total_duplicate": g["dup"],
-                    })
+                    db.upsert_group(
+                        {
+                            "group_id": gid,
+                            "group_name": g["name"],
+                            "group_url": gid,
+                            "trust_score": trust,
+                            "spam_ratio": round(spam_r, 3),
+                            "duplicate_ratio": round(dup_r, 3),
+                            "crawl_priority": pri,
+                            "total_crawled": g["total"],
+                            "total_spam": g["spam"],
+                            "total_duplicate": g["dup"],
+                        }
+                    )
                     logger.info(f"📈 [{g['name']}] trust={trust} | {pri}")
                 except Exception as e:
                     logger.warning(f"⚠️  upsert_group failed: {e}")
@@ -376,11 +507,13 @@ class FacebookCrawler:
                 logger.info("✅ Connected to existing Chrome session")
             except Exception as e:
                 logger.error(f"❌ Cannot connect to Chrome: {e}")
-                logger.info("💡 Run: chrome.exe --remote-debugging-port=9222 --user-data-dir=...")
+                logger.info(
+                    "💡 Run: chrome.exe --remote-debugging-port=9222 --user-data-dir=..."
+                )
                 return []
 
             context = browser.contexts[0]
-            page    = context.new_page()
+            page = context.new_page()
             self._setup_page(page)
 
             selected = self._select_groups()
@@ -413,8 +546,8 @@ class FacebookCrawler:
     def _crawl_single_group(self, page: Page, group: dict) -> List[JobModel]:
         jobs = []
         group_url = group["url"]
-        seen_ids  = self.state.get_seen_ids(group_url)
-        new_ids   = []
+        seen_ids = self.state.get_seen_ids(group_url)
+        new_ids = []
 
         logger.info(f"🌐 Group: {group['name']} | seen={len(seen_ids)} past IDs")
 
@@ -451,6 +584,22 @@ class FacebookCrawler:
                 continue
 
             job = self._build_job_model(post, group)
+
+            # --- Lọc bài đăng quá 3 ngày ---
+            is_too_old = False
+            if job.posted_date:
+                try:
+                    post_dt = datetime.strptime(job.posted_date, "%Y-%m-%d %H:%M:%S")
+                    old_days = (datetime.now() - post_dt).days
+                    if old_days > 3:
+                        logger.debug(f"   ⏭ Skip bài đăng cũ ({old_days} ngày trước)")
+                        is_too_old = True
+                except Exception:
+                    pass
+
+            if is_too_old:
+                continue
+
             if job.title or job.description:
                 jobs.append(job)
                 new_count += 1
@@ -481,7 +630,9 @@ class FacebookCrawler:
             try:
                 os.makedirs("logs", exist_ok=True)
                 page.screenshot(path="logs/error_no_articles.png")
-                logger.warning("📸 Đã lưu ảnh màn hình lỗi tại logs/error_no_articles.png để kiểm tra")
+                logger.warning(
+                    "📸 Đã lưu ảnh màn hình lỗi tại logs/error_no_articles.png để kiểm tra"
+                )
             except Exception as e:
                 logger.debug(f"Could not take screenshot: {e}")
             return []
@@ -508,7 +659,9 @@ class FacebookCrawler:
                     for kw in ["xem thêm", "see more", "xem thêm nội dung"]
                 )
                 if see_more_still_present:
-                    logger.debug(f"   ⚠️ Article #{i}: vẫn còn 'Xem thêm', retry expand...")
+                    logger.debug(
+                        f"   ⚠️ Article #{i}: vẫn còn 'Xem thêm', retry expand..."
+                    )
                     self._expand_see_more_article(article)
                     post = self._parse_article_locator(article)
                     if not post:
@@ -519,7 +672,9 @@ class FacebookCrawler:
                 if len(content) > 40:
                     posts.append(post)
                 else:
-                    logger.debug(f"   ⏭ Article #{i}: content quá ngắn ({len(content)} chars), bỏ qua")
+                    logger.debug(
+                        f"   ⏭ Article #{i}: content quá ngắn ({len(content)} chars), bỏ qua"
+                    )
 
             except Exception as e:
                 logger.debug(f"   Parse error article #{i}: {e}")
@@ -563,7 +718,9 @@ class FacebookCrawler:
                 except Exception:
                     pass
                 if loc.count() > 0:
-                    logger.debug(f"   ✓ Article selector: '{selector}' → {loc.count()} found")
+                    logger.debug(
+                        f"   ✓ Article selector: '{selector}' → {loc.count()} found"
+                    )
                     return loc
                 logger.debug(f"   ✗ Article selector failed: '{selector}'")
             except Exception as e:
@@ -629,10 +786,9 @@ class FacebookCrawler:
         if not content:
             return None
 
-
         # Post URL fallback
         post_url = ""
-        post_id  = ""
+        post_id = ""
         for sel in LINK_SELECTORS:
             try:
                 el = article.locator(sel).first
@@ -642,7 +798,7 @@ class FacebookCrawler:
                         if not href.startswith("http"):
                             href = "https://www.facebook.com" + href
                         post_url = href
-                        post_id  = hashlib.md5(href.encode()).hexdigest()[:16]
+                        post_id = hashlib.md5(href.encode()).hexdigest()[:16]
                         break
             except Exception:
                 continue
@@ -663,14 +819,21 @@ class FacebookCrawler:
         posted_time = ""
         try:
             # Cách 1: abbr có aria-label (Facebook thường dùng cho timestamp)
-            time_els = article.locator("abbr[aria-label], abbr[data-utime], a[role='link'] abbr")
+            time_els = article.locator(
+                "abbr[aria-label], abbr[data-utime], a[role='link'] abbr"
+            )
             if time_els.count() > 0:
                 aria = time_els.first.get_attribute("aria-label", timeout=1500) or ""
-                data_utime = time_els.first.get_attribute("data-utime", timeout=500) or ""
+                data_utime = (
+                    time_els.first.get_attribute("data-utime", timeout=500) or ""
+                )
                 if data_utime.isdigit():
                     # Unix timestamp → datetime
                     from datetime import timezone
-                    posted_time = datetime.fromtimestamp(int(data_utime), tz=timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+
+                    posted_time = datetime.fromtimestamp(
+                        int(data_utime), tz=timezone.utc
+                    ).strftime("%Y-%m-%d %H:%M:%S")
                 elif aria:
                     posted_time = aria  # vd: "17 May 2026 at 23:17"
                 else:
@@ -691,10 +854,10 @@ class FacebookCrawler:
                     continue
 
         return {
-            "content":     content,
-            "post_url":    post_url,
-            "post_id":     post_id,
-            "author":      author,
+            "content": content,
+            "post_url": post_url,
+            "post_id": post_id,
+            "author": author,
             "posted_time": posted_time,
         }
 
@@ -708,7 +871,7 @@ class FacebookCrawler:
         for text in SEE_MORE_TEXTS:
             try:
                 buttons = page.locator(f"text={text}")
-                count   = buttons.count()
+                count = buttons.count()
                 for i in range(min(count, 20)):
                     success = self._click_with_retry(buttons.nth(i))
                     if success:
@@ -731,10 +894,9 @@ class FacebookCrawler:
     # ============================================================
 
     def _setup_page(self, page: Page):
-        page.set_viewport_size({
-            "width":  random.randint(1366, 1920),
-            "height": random.randint(768, 1080)
-        })
+        page.set_viewport_size(
+            {"width": random.randint(1366, 1920), "height": random.randint(768, 1080)}
+        )
         page.evaluate("""() => {
             Object.defineProperty(navigator, 'webdriver', {get: () => undefined});
             Object.defineProperty(navigator, 'languages', {get: () => ['vi-VN', 'vi']});
@@ -762,7 +924,7 @@ class FacebookCrawler:
                 page.mouse.move(
                     random.randint(150, 900),
                     random.randint(100, 600),
-                    steps=random.randint(5, 12)
+                    steps=random.randint(5, 12),
                 )
             except Exception:
                 pass
@@ -774,7 +936,9 @@ class FacebookCrawler:
                 scroll_px = random.randint(400, 850)
 
             try:
-                page.evaluate(f"window.scrollBy({{top: {scroll_px}, behavior: 'smooth'}})")
+                page.evaluate(
+                    f"window.scrollBy({{top: {scroll_px}, behavior: 'smooth'}})"
+                )
                 page.wait_for_load_state("networkidle", timeout=4000)
             except Exception:
                 pass
@@ -791,14 +955,14 @@ class FacebookCrawler:
                     f"() => document.querySelectorAll('div[role=\"article\"]').length"
                 )
                 if count >= 25:
-                    logger.debug(f"   Scroll {i+1}: {count} articles — stopping")
+                    logger.debug(f"   Scroll {i + 1}: {count} articles — stopping")
                     break
             except Exception:
                 pass
 
     def _human_delay(self, min_s: float = 1.5, max_s: float = 4.0):
         """Sleep với Gaussian jitter — tự nhiên hơn uniform."""
-        mid   = (min_s + max_s) / 2
+        mid = (min_s + max_s) / 2
         sigma = (max_s - min_s) / 4
         t = random.gauss(mid, sigma)
         t = max(min_s, min(max_s, t))
@@ -812,22 +976,26 @@ class FacebookCrawler:
         content = post.get("content", "")
 
         job = JobModel(source=self.SOURCE_NAME)
-        job.title         = self.cleaner.extract_title(content)
-        job.description   = self.cleaner._clean_text(content)
+        job.title = self.cleaner.extract_title(content)
+        job.description = self.cleaner._clean_text(content)
         job.contact_phone = self.cleaner.extract_phone(content)
-        job.company       = self.cleaner.extract_company(content, getattr(self, "verified_entities", None))
-        job.salary        = self.cleaner.extract_salary(content)
-        job.location      = self.cleaner.extract_location(content)
-        job.skills        = self.cleaner.extract_skills(content)
-        job.job_type      = self.cleaner.extract_job_type(content)
-        job.requirements  = self.cleaner.extract_requirements(content)
-        job.job_url       = post.get("post_url", "")
+        job.company = self.cleaner.extract_company(
+            content, getattr(self, "verified_entities", None)
+        )
+        job.salary = self.cleaner.extract_salary(content)
+        job.location = self.cleaner.extract_location(content)
+        job.skills = self.cleaner.extract_skills(content)
+        job.job_type = self.cleaner.extract_job_type(content)
+        job.requirements = self.cleaner.extract_requirements(content)
+        job.job_url = post.get("post_url", "")
         raw_time = post.get("posted_time", "")
-        job.posted_date   = self._parse_posted_time(raw_time)
-        job.external_id   = post.get("post_id", "") or self._make_id(post.get("post_url", ""))
-        job.fingerprint   = self.cleaner.make_fingerprint(content)
-        job.group_id      = group.get("url", "unknown")
-        job.group_name    = group.get("name", "unknown")
+        job.posted_date = self._parse_posted_time(raw_time)
+        job.external_id = post.get("post_id", "") or self._make_id(
+            post.get("post_url", "")
+        )
+        job.fingerprint = self.cleaner.make_fingerprint(content)
+        job.group_id = group.get("url", "unknown")
+        job.group_name = group.get("name", "unknown")
         return job
 
     def _make_id(self, url: str) -> str:
@@ -842,25 +1010,26 @@ class FacebookCrawler:
         """
         import re
         from datetime import timezone, timedelta
+
         if not raw:
             return ""
 
         now = datetime.now()
 
         # Dạng: "X phút" / "X phút trước"
-        m = re.search(r'(\d+)\s*ph[u\xfa]t', raw, re.IGNORECASE)
+        m = re.search(r"(\d+)\s*ph[u\xfa]t", raw, re.IGNORECASE)
         if m:
             dt = now - timedelta(minutes=int(m.group(1)))
             return dt.strftime("%Y-%m-%d %H:%M:%S")
 
         # Dạng: "X giờ" / "X giờ trước"
-        m = re.search(r'(\d+)\s*gi[o\u1edd]', raw, re.IGNORECASE)
+        m = re.search(r"(\d+)\s*gi[o\u1edd]", raw, re.IGNORECASE)
         if m:
             dt = now - timedelta(hours=int(m.group(1)))
             return dt.strftime("%Y-%m-%d %H:%M:%S")
 
         # Dạng: "X ngày" / "X ngày trước"
-        m = re.search(r'(\d+)\s*ng[a\xE0]y', raw, re.IGNORECASE)
+        m = re.search(r"(\d+)\s*ng[a\xE0]y", raw, re.IGNORECASE)
         if m:
             dt = now - timedelta(days=int(m.group(1)))
             return dt.strftime("%Y-%m-%d %H:%M:%S")
@@ -868,44 +1037,54 @@ class FacebookCrawler:
         # Dạng: "May 17, 2026 at 11:41 PM" hoặc "17 May 2026 at 23:17"
         # Regex extract linh hoạt hơn strptime
         m = re.search(
-            r'(\w+\s+\d{1,2},?\s+\d{4})\s+at\s+(\d{1,2}:\d{2}(?:\s*[AP]M)?)',
-            raw, re.IGNORECASE
+            r"(\w+\s+\d{1,2},?\s+\d{4})\s+at\s+(\d{1,2}:\d{2}(?:\s*[AP]M)?)",
+            raw,
+            re.IGNORECASE,
         )
         if m:
-            date_part = m.group(1).replace(',', '').strip()
+            date_part = m.group(1).replace(",", "").strip()
             time_part = m.group(2).strip().upper()
-            for fmt in ["%B %d %Y %I:%M %p", "%B %d %Y %H:%M",
-                        "%d %B %Y %I:%M %p", "%d %B %Y %H:%M"]:
+            for fmt in [
+                "%B %d %Y %I:%M %p",
+                "%B %d %Y %H:%M",
+                "%d %B %Y %I:%M %p",
+                "%d %B %Y %H:%M",
+            ]:
                 try:
-                    return datetime.strptime(f"{date_part} {time_part}", fmt).strftime("%Y-%m-%d %H:%M:%S")
+                    return datetime.strptime(f"{date_part} {time_part}", fmt).strftime(
+                        "%Y-%m-%d %H:%M:%S"
+                    )
                 except ValueError:
                     continue
 
         # Dạng: "17 May 2026 at 23:17" (ngày trước, tháng sau — regex trên có thể miss)
         m2 = re.search(
-            r'(\d{1,2}\s+\w+\s+\d{4})\s+at\s+(\d{1,2}:\d{2}(?:\s*[AP]M)?)',
-            raw, re.IGNORECASE
+            r"(\d{1,2}\s+\w+\s+\d{4})\s+at\s+(\d{1,2}:\d{2}(?:\s*[AP]M)?)",
+            raw,
+            re.IGNORECASE,
         )
         if m2:
             date_part = m2.group(1).strip()
             time_part = m2.group(2).strip().upper()
             for fmt in ["%d %B %Y %I:%M %p", "%d %B %Y %H:%M"]:
                 try:
-                    return datetime.strptime(f"{date_part} {time_part}", fmt).strftime("%Y-%m-%d %H:%M:%S")
+                    return datetime.strptime(f"{date_part} {time_part}", fmt).strftime(
+                        "%Y-%m-%d %H:%M:%S"
+                    )
                 except ValueError:
                     continue
 
         # Dạng: "17 May 2026" hoặc "May 17, 2026" (không có giờ)
         for fmt in ["%d %B %Y", "%B %d %Y", "%Y-%m-%d %H:%M:%S", "%Y-%m-%d"]:
             try:
-                return datetime.strptime(raw.strip().replace(',', ''), fmt).strftime("%Y-%m-%d %H:%M:%S")
+                return datetime.strptime(raw.strip().replace(",", ""), fmt).strftime(
+                    "%Y-%m-%d %H:%M:%S"
+                )
             except ValueError:
                 continue
 
         # Giữ nguyên nếu không parse được
         return raw[:50]
-
-
 
     # ============================================================
     # FILTER
@@ -926,8 +1105,12 @@ class FacebookCrawler:
 
     def _select_groups(self) -> List[dict]:
         """Chọn groups theo priority, shuffle trong từng mức."""
-        high   = [g for g in FACEBOOK_GROUPS if g.get("priority") == "high"]
+        high = [g for g in FACEBOOK_GROUPS if g.get("priority") == "high"]
         medium = [g for g in FACEBOOK_GROUPS if g.get("priority") == "medium"]
-        low    = [g for g in FACEBOOK_GROUPS if g.get("priority") not in ("high", "medium")]
-        random.shuffle(high); random.shuffle(medium); random.shuffle(low)
-        return (high + medium + low)[:self.max_groups]
+        low = [
+            g for g in FACEBOOK_GROUPS if g.get("priority") not in ("high", "medium")
+        ]
+        random.shuffle(high)
+        random.shuffle(medium)
+        random.shuffle(low)
+        return (high + medium + low)[: self.max_groups]

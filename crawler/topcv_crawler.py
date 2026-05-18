@@ -3,6 +3,7 @@ import re
 from bs4 import BeautifulSoup
 from crawler.base_crawler import BaseCrawler, logger
 from models.job_model import JobModel
+from datetime import datetime, timedelta
 
 NON_SKILL_PATTERNS = [
     "phần mềm", "giáo dục", "y tế", "thương mại",
@@ -206,8 +207,9 @@ class TopCVCrawler(BaseCrawler):
                             elif "học vấn" in t or "trình độ" in t or "bằng cấp" in t:
                                 job.education = v
                             elif "cấp bậc" in t:
-                                # TopCV thường có Cấp bậc, có thể bỏ qua hoặc đưa vào description
                                 pass
+                            elif "mức lương" in t:
+                                job.salary = v
             
             # Fallback nếu TopCV dùng DOM ẩn hoặc khác cho Kinh nghiệm
             if not job.experience_year:
@@ -280,6 +282,46 @@ class TopCVCrawler(BaseCrawler):
                         unique_skills.append(s)
                 job.skills = unique_skills
 
+            # ── Deadline (Hạn nộp hồ sơ) ─────────────────────────────
+            # TopCV thường hiển thị Hạn nộp hồ sơ thay vì Ngày đăng
+            date_selectors = [
+                "time[datetime]",
+                ".deadline span",
+                "span[class*='date']",
+                "span[class*='time']",
+                ".job-detail__info--deadline",
+                ".job-detail__info--updated-date",
+                "div[class*='deadline']",
+                ".box-info-job time",
+                ".job-detail__box-general-right time",
+            ]
+            for sel in date_selectors:
+                el = soup.select_one(sel)
+                if el:
+                    datetime_attr = el.get("datetime", "")
+                    if datetime_attr:
+                        pd = self._parse_posted_date(datetime_attr)
+                    else:
+                        pd = self._parse_posted_date(el.get_text(strip=True))
+                    if pd:
+                        job.deadline = pd
+                        break
+
+            # Fallback: tìm label "Hạn nộp hồ sơ" hoặc "Hết hạn"
+            if not job.deadline:
+                date_label = soup.find(string=re.compile(r"Hạn nộp|Deadline|Hết hạn", re.IGNORECASE))
+                if date_label:
+                    parent = date_label.find_parent(["div", "span", "li"])
+                    if parent:
+                        sib = parent.find_next_sibling(["div", "span", "strong", "p"])
+                        if sib:
+                            pd = self._parse_posted_date(sib.get_text(strip=True))
+                            if pd:
+                                job.deadline = pd
+            
+            # Ngày đăng để None vì TopCV không hiển thị
+            job.posted_date = ""
+
             # Smart Parser: Đọc free-text để điền các ô còn trống
             self._fill_missing_fields_from_text(job)
 
@@ -347,6 +389,48 @@ class TopCVCrawler(BaseCrawler):
                 if sal_match:
                     job.salary = sal_match.group(1).title()
                     break
+
+    def _parse_posted_date(self, text: str) -> str:
+        """Parse ngày đăng bài từ TopCV - hỗ trợ nhiều format."""
+        if not text:
+            return ""
+        text = text.strip()
+        text_lower = text.lower()
+
+        # ISO 8601: 2026-05-18T... hoặc 2026-05-18
+        m = re.match(r"(\d{4}-\d{2}-\d{2})", text)
+        if m:
+            return m.group(1)
+
+        # dd/mm/yyyy hoặc dd-mm-yyyy
+        m = re.search(r"(\d{1,2})[/-](\d{1,2})[/-](\d{4})", text)
+        if m:
+            try:
+                return datetime(
+                    int(m.group(3)), int(m.group(2)), int(m.group(1))
+                ).strftime("%Y-%m-%d")
+            except ValueError:
+                pass
+
+        # Relative date
+        now = datetime.now()
+        num_match = re.search(r"(\d+)", text_lower)
+        num = int(num_match.group(1)) if num_match else 1
+
+        if any(w in text_lower for w in ["giờ", "hour", "hr"]):
+            return (now - timedelta(hours=num)).strftime("%Y-%m-%d")
+        elif any(w in text_lower for w in ["ngày", "day"]):
+            return (now - timedelta(days=num)).strftime("%Y-%m-%d")
+        elif any(w in text_lower for w in ["tuần", "week"]):
+            return (now - timedelta(weeks=num)).strftime("%Y-%m-%d")
+        elif any(w in text_lower for w in ["tháng", "month"]):
+            return (now - timedelta(days=num * 30)).strftime("%Y-%m-%d")
+        elif any(w in text_lower for w in ["hôm nay", "today", "just now", "vừa"]):
+            return now.strftime("%Y-%m-%d")
+        elif any(w in text_lower for w in ["hôm qua", "yesterday"]):
+            return (now - timedelta(days=1)).strftime("%Y-%m-%d")
+
+        return ""
 
     def debug_save_html(self, page_num: int = 1):
         """

@@ -64,9 +64,14 @@ CREATE TABLE users (
     preferred_skills        NVARCHAR(MAX) NULL,
 
     cv_text                 NVARCHAR(MAX) NULL,
+    cv_file_url             NVARCHAR(1000) NULL, -- Upload file PDF
     cv_embedding            NVARCHAR(MAX) NULL,   -- JSON float array
 
     avatar_url              NVARCHAR(1000) NULL,
+    
+    -- Rating System
+    average_rating          FLOAT DEFAULT 0.0,
+    total_reviews           INT DEFAULT 0,
 
     is_active               BIT DEFAULT 1,
 
@@ -159,6 +164,9 @@ CREATE TABLE jobs (
     is_geocoded             BIT DEFAULT 0,
     needs_review            BIT DEFAULT 0,
     review_notes            NVARCHAR(MAX) NULL,
+    
+    view_count              INT DEFAULT 0,
+    apply_count             INT DEFAULT 0,
 
     -- ── AI/Embedding ──────────────────────────────────────────────
     embedding               NVARCHAR(MAX) NULL,    -- JSON float array
@@ -192,6 +200,26 @@ CREATE TABLE jobs (
     CONSTRAINT CHK_job_status
         CHECK (status IN ('pending','approved','rejected','expired'))
 );
+GO
+
+-- =============================================
+-- JOB LOCATIONS (Lưu nhiều tọa độ cho 1 job)
+-- =============================================
+
+CREATE TABLE job_locations (
+    id                      INT IDENTITY(1,1) PRIMARY KEY,
+    job_id                  INT NOT NULL,
+    address_text            NVARCHAR(500) NOT NULL,
+    latitude                FLOAT NULL,
+    longitude               FLOAT NULL,
+    geocoding_confidence    FLOAT DEFAULT 0,
+
+    CONSTRAINT FK_job_locations_job
+        FOREIGN KEY (job_id) REFERENCES jobs(id)
+        ON DELETE CASCADE
+);
+GO
+CREATE INDEX IX_job_locations_job_id ON job_locations(job_id);
 GO
 
 -- =============================================
@@ -451,10 +479,48 @@ PRINT ' AI Job Recommendation DB — Created!';
 PRINT ' Tables:';
 PRINT '   users, employer_profiles';
 PRINT '   jobs (+ normalized + dedup + cross-source)';
+PRINT '   job_locations';
 PRINT '   facebook_groups (trust scoring)';
 PRINT '   job_applications, saved_jobs';
 PRINT '   notifications, user_interactions';
 PRINT '   scrape_tasks';
 PRINT '   skill_nodes, skill_relations';
 PRINT '============================================';
+GO
+
+
+-- =============================================
+-- REVIEWS / RATINGS
+-- =============================================
+CREATE TABLE reviews (
+    id                      INT IDENTITY(1,1) PRIMARY KEY,
+    reviewer_id             INT NOT NULL,
+    reviewee_id             INT NOT NULL,
+    job_id                  INT NULL,
+    rating                  INT NOT NULL CHECK (rating >= 1 AND rating <= 5),
+    comment                 NVARCHAR(MAX) NULL,
+    status                  NVARCHAR(20) DEFAULT 'published',
+    created_at              DATETIME DEFAULT GETUTCDATE(),
+    CONSTRAINT FK_reviewer FOREIGN KEY (reviewer_id) REFERENCES users(id),
+    CONSTRAINT FK_reviewee FOREIGN KEY (reviewee_id) REFERENCES users(id),
+    CONSTRAINT FK_review_job FOREIGN KEY (job_id) REFERENCES jobs(id)
+);
+GO
+
+-- =============================================
+-- AI CORRECTIONS / DICTIONARY (ACTIVE LEARNING)
+-- =============================================
+CREATE TABLE job_corrections (
+    id                      INT IDENTITY(1,1) PRIMARY KEY,
+    original_text           NVARCHAR(500) NOT NULL,
+    field_type              NVARCHAR(50) NOT NULL,
+    ai_predicted_value      NVARCHAR(500) NULL,
+    admin_corrected_value   NVARCHAR(500) NOT NULL,
+    corrected_by            INT NULL,
+    created_at              DATETIME DEFAULT GETUTCDATE(),
+    CONSTRAINT FK_correction_admin FOREIGN KEY (corrected_by) REFERENCES users(id)
+);
+GO
+
+CREATE INDEX IX_corrections_text ON job_corrections(original_text, field_type);
 GO

@@ -5,6 +5,7 @@ Công cụ Admin: Chuyển đổi địa chỉ text → GPS
 Sử dụng công thức Haversine để tính khoảng cách
 =============================================
 """
+
 import math
 import re
 import time
@@ -18,41 +19,41 @@ import config
 def haversine_distance(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
     """
     Tính khoảng cách chim bay giữa 2 điểm GPS bằng công thức Haversine.
-    
+
     Args:
         lat1, lon1: Tọa độ điểm 1 (độ thập phân)
         lat2, lon2: Tọa độ điểm 2 (độ thập phân)
-    
+
     Returns:
         float: Khoảng cách tính bằng km
-    
+
     Công thức:
         a = sin²(Δlat/2) + cos(lat1)·cos(lat2)·sin²(Δlon/2)
         c = 2·atan2(√a, √(1−a))
         d = R·c  (R = 6371 km)
     """
     R = 6371.0  # Bán kính Trái Đất (km)
-    
+
     lat1_rad = math.radians(lat1)
     lat2_rad = math.radians(lat2)
-    dlat     = math.radians(lat2 - lat1)
-    dlon     = math.radians(lon2 - lon1)
-    
-    a = (math.sin(dlat / 2) ** 2
-         + math.cos(lat1_rad) * math.cos(lat2_rad) * math.sin(dlon / 2) ** 2)
+    dlat = math.radians(lat2 - lat1)
+    dlon = math.radians(lon2 - lon1)
+
+    a = (
+        math.sin(dlat / 2) ** 2
+        + math.cos(lat1_rad) * math.cos(lat2_rad) * math.sin(dlon / 2) ** 2
+    )
     c = 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
-    
+
     return R * c
 
 
 def is_within_radius(
-    job_lat: float, job_lng: float,
-    user_lat: float, user_lng: float,
-    radius_km: float
+    job_lat: float, job_lng: float, user_lat: float, user_lng: float, radius_km: float
 ) -> Tuple[bool, float]:
     """
     Kiểm tra việc làm có trong bán kính tìm kiếm của người dùng không.
-    
+
     Returns:
         Tuple[bool, float]: (trong_bán_kính, khoảng_cách_km)
     """
@@ -71,28 +72,32 @@ class GeocodingProcessor:
 
     # Bản đồ thủ công cho các quận/huyện tại Đà Nẵng
     DANANG_DISTRICTS = {
-        "hải châu":     (16.0679, 108.2208),
-        "thanh khê":    (16.0679, 108.1958),
-        "sơn trà":      (16.1000, 108.2394),
+        "hải châu": (16.0679, 108.2208),
+        "thanh khê": (16.0679, 108.1958),
+        "sơn trà": (16.1000, 108.2394),
         "ngũ hành sơn": (15.9938, 108.2600),
-        "cẩm lệ":       (16.0231, 108.1889),
-        "liên chiểu":   (16.1056, 108.1608),
-        "hòa vang":     (16.0069, 108.1189),
-        "trung tâm":    (16.0544, 108.2022),
-        "đà nẵng":      (16.0544, 108.2022),
+        "cẩm lệ": (16.0231, 108.1889),
+        "liên chiểu": (16.1056, 108.1608),
+        "hòa vang": (16.0069, 108.1189),
+        "trung tâm": (16.0544, 108.2022),
+        "đà nẵng": (16.0544, 108.2022),
     }
 
     def __init__(self):
         self.session = requests.Session()
-        self.session.headers.update({
-            "User-Agent": "JobAgentBot/1.0 (contact@example.com)"
-        })
+        # Nominatim requires proper User-Agent
+        self.session.headers.update(
+            {
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 AI-JobAgent/1.0 (+http://localhost:8000)"
+            }
+        )
         self._cache: dict = {}
+        self._last_nominatim_call = 0  # Rate limiting tracker
 
     def geocode(self, address: str) -> Optional[dict]:
         """
         Chuyển đổi địa chỉ text → tọa độ GPS.
-        
+
         Returns:
             dict: {lat, lng, confidence, formatted_address}
         """
@@ -107,16 +112,69 @@ class GeocodingProcessor:
 
         result = None
 
-        # Tầng 1: Nominatim
-        result = self._geocode_nominatim(address_normalized)
+        # Tầng 1: OpenCage (nếu có key) - NHANH NHẤT
+        if hasattr(config, "OPENCAGE_API_KEY") and config.OPENCAGE_API_KEY:
+            result = self._geocode_opencage(address_normalized)
 
-        # Tầng 2: Google Maps (nếu có key)
+        # Tầng 2: Nominatim (miễn phí, không cần key)
+        if not result:
+            result = self._geocode_nominatim(address_normalized)
+
+        # Tầng 3: Google Maps (nếu có key)
         if not result and config.GOOGLE_MAPS_API_KEY:
             result = self._geocode_google(address_normalized)
 
-        # Tầng 3: Fallback thủ công theo quận Đà Nẵng
+        # Tầng 4: Fallback thủ công theo quận Đà Nẵng
         if not result:
             result = self._geocode_fallback(address_normalized)
+
+        # Nếu vẫn không có kết quả, thử tách các đoạn địa chỉ và thử từng phần nhỏ hơn.
+        if not result:
+            # Thử tìm tên thành phố lớn trong chuỗi để ưu tiên
+            cities = [
+                "hồ chí minh",
+                "ho chi minh",
+                "sài gòn",
+                "saigon",
+                "hà nội",
+                "ha noi",
+                "đà nẵng",
+                "da nang",
+                "hải phòng",
+                "hai phong",
+                "cần thơ",
+                "can tho",
+            ]
+            lower = address.lower()
+            for city in cities:
+                if city in lower:
+                    try_addr = f"{city.title()}, Việt Nam"
+                    logger.info(f"[Geocoding] Trying city fallback: {try_addr}")
+                    # try OpenCage first if available
+                    if hasattr(config, "OPENCAGE_API_KEY") and config.OPENCAGE_API_KEY:
+                        result = self._geocode_opencage(try_addr)
+                    if not result:
+                        result = self._geocode_nominatim(try_addr)
+                    if result:
+                        # Lower confidence because we only matched city
+                        result["confidence"] = min(result.get("confidence", 0.5), 0.6)
+                        return result
+
+            # Nếu không tìm thấy city hoặc không thành công, thử các đoạn chia theo dấu phẩy hoặc ':'
+            parts = re.split(r"[,;:\n]+", address)
+            # sắp xếp các phần theo độ dài (ưu tiên phần dài hơn)
+            parts = [p.strip() for p in parts if len(p.strip()) > 3]
+            parts = sorted(parts, key=lambda x: -len(x))
+            for part in parts:
+                try_part = self._normalize_address(part)
+                logger.info(f"[Geocoding] Trying part fallback: {try_part}")
+                if hasattr(config, "OPENCAGE_API_KEY") and config.OPENCAGE_API_KEY:
+                    result = self._geocode_opencage(try_part)
+                if not result:
+                    result = self._geocode_nominatim(try_part)
+                if result:
+                    result["confidence"] = min(result.get("confidence", 0.5), 0.5)
+                    return result
 
         if result:
             self._cache[address_normalized] = result
@@ -124,26 +182,111 @@ class GeocodingProcessor:
         return result
 
     def _normalize_address(self, address: str) -> str:
-        """Chuẩn hóa địa chỉ tiếng Việt."""
+        """Chuẩn hóa địa chỉ tiếng Việt - KHÔNG thêm thành phố cố định."""
         address = address.strip()
-        # Thêm ", Đà Nẵng, Việt Nam" nếu chưa có
-        if "đà nẵng" not in address.lower() and "da nang" not in address.lower():
-            address = f"{address}, Đà Nẵng, Việt Nam"
+        address_lower = address.lower()
+
+        # Chỉ thêm ", Việt Nam" nếu chưa có tên thành phố lớn hoặc quốc gia
+        VN_MARKERS = [
+            "việt nam", "vietnam", "viet nam",
+            "hà nội", "ha noi", "hanoi",
+            "hồ chí minh", "ho chi minh", "hcm", "tp.hcm", "saigon", "sài gòn",
+            "đà nẵng", "da nang", "danang",
+            "hải phòng", "hai phong",
+            "cần thơ", "can tho",
+            "bình dương", "binh duong",
+            "đồng nai", "dong nai",
+        ]
+        has_location_context = any(marker in address_lower for marker in VN_MARKERS)
+        if not has_location_context:
+            address = f"{address}, Việt Nam"
         return address
+
+    def _split_addresses(self, address: str) -> list[str]:
+        """
+        Tách cỗ hợp address chứa nhiều địa chỉ (VD: VietnamWorks liệt kê 2 văn phòng).
+
+        Chiến lược: tìm "ranh giới thành phố" — điểm nào trong chuỗi mà sau dấu phẩy
+        là địa chỉ mới bắt đầu (có ký tự hoa, chứa số đường, hoặc chứa tên toà nhà).
+
+        Qui tắc chia:
+        - Địa chỉ được ngăn cách khi có tên thành phố lớn (Hanoi, HCM, ...)
+          xuất hiện sau đó là một đoạn mới (bắt đầu bằng viết hoa hoặc số).
+        - Nếu chỉ có một địa chỉ thì trả về list một phần tử.
+
+        Returns:
+            list[địa_chỉ]: danh sách địa chỉ riêng lẻ
+        """
+        if not address or len(address.strip()) < 5:
+            return [address]
+
+        # Các marker tên thành phố mà khi xuất hiện có thể là „raãnh giới“ của địa chỉ
+        CITY_BOUNDARY_PATTERN = re.compile(
+            r"""(?ix)
+            # Sau một marker thành phố, tìm dấu phẩy theo sau bắt đầu địa chỉ mới
+            (?P<city_end>
+                \b(?:
+                    Hanoi|Hà\s*Nội|HAN|HNI|
+                    HCM|Ho\s*Chi\s*Minh|Hồ\s*Chí\s*Minh|Saigon|Sài\s*Gòn|HCMC|TP\.?HCM|
+                    Thu\s*Duc|Thủ\s*Đức|
+                    Da\s*Nang|Đà\s*Nẵng|
+                    Hai\s*Phong|Hải\s*Phòng|
+                    Can\s*Tho|Cần\s*Thơ|
+                    Binh\s*Duong|Bình\s*Dương|
+                    Dong\s*Nai|Đồng\s*Nai
+                )\b
+            )
+            # theo sau là dấu phẩy rồi chử cái in hoa hoặc số (bắt đầu địa chỉ mới)
+            ,\s*(?=[A-ZĐẠỮẨỤẦỐẢĂÂÊÔỰ\d])
+            """,
+        )
+
+        # Tìm vị trí cắt - cuối phần city_end
+        split_points = []
+        for m in CITY_BOUNDARY_PATTERN.finditer(address):
+            # Vị trí cắt: sau dấu phẩy ngay sau thành phố
+            split_points.append(m.end("city_end") + 1)  # +1 để bỏ qua dấu phẩy
+
+        if not split_points:
+            return [address.strip()]
+
+        # Xây dựng danh sách địa chỉ từ các điểm cắt
+        parts = []
+        prev = 0
+        for sp in split_points:
+            part = address[prev:sp].rstrip(", ")
+            if part.strip():
+                parts.append(part.strip())
+            prev = sp
+        # Phần cuối
+        last_part = address[prev:].strip().lstrip(", ")
+        if last_part:
+            parts.append(last_part)
+
+        # Loc bỏ địa chỉ quá ngắn (chỉ có tên thành phố)
+        parts = [p for p in parts if len(p) > 8]
+
+        return parts if parts else [address.strip()]
 
     def _geocode_nominatim(self, address: str) -> Optional[dict]:
         """Geocoding sử dụng Nominatim (OpenStreetMap)."""
+        # Rate limit: respect Nominatim's 1 req/s policy
+        elapsed = time.time() - self._last_nominatim_call
+        if elapsed < 1.1:
+            time.sleep(1.1 - elapsed)
+
         try:
+            self._last_nominatim_call = time.time()
             resp = self.session.get(
                 "https://nominatim.openstreetmap.org/search",
                 params={
-                    "q":              address,
-                    "format":         "json",
-                    "limit":          1,
-                    "countrycodes":   "vn",
-                    "accept-language":"vi",
+                    "q": address,
+                    "format": "json",
+                    "limit": 1,
+                    "countrycodes": "vn",
+                    "accept-language": "vi",
                 },
-                timeout=config.REQUEST_TIMEOUT
+                timeout=config.REQUEST_TIMEOUT,
             )
             resp.raise_for_status()
             data = resp.json()
@@ -151,32 +294,75 @@ class GeocodingProcessor:
             if data:
                 item = data[0]
                 return {
-                    "lat":               float(item["lat"]),
-                    "lng":               float(item["lon"]),
-                    "confidence":        min(float(item.get("importance", 0.5)), 1.0),
+                    "lat": float(item["lat"]),
+                    "lng": float(item["lon"]),
+                    "confidence": min(float(item.get("importance", 0.5)), 1.0),
                     "formatted_address": item.get("display_name", address),
-                    "source":            "nominatim",
+                    "source": "nominatim",
                 }
-
-            time.sleep(1)  # Rate limit Nominatim: 1 req/s
 
         except Exception as e:
             logger.warning(f"[Geocoding] Nominatim error: {e}")
 
         return None
 
+    def _geocode_opencage(self, address: str) -> Optional[dict]:
+        """
+        Geocoding sử dụng OpenCage API (Nhanh + Miễn phí).
+
+        Để dùng, thêm vào config.py:
+            OPENCAGE_API_KEY = "your_key_here"  # Lấy từ https://opencagedata.com
+
+        Miễn phí: 2,500 requests/ngày
+        """
+        if not hasattr(config, "OPENCAGE_API_KEY") or not config.OPENCAGE_API_KEY:
+            return None
+
+        try:
+            resp = self.session.get(
+                "https://api.opencagedata.com/geocode/v1/json",
+                params={
+                    "q": address,
+                    "key": config.OPENCAGE_API_KEY,
+                    "language": "vi",
+                    "countrycode": "vn",
+                },
+                timeout=config.REQUEST_TIMEOUT,
+            )
+            resp.raise_for_status()
+            data = resp.json()
+
+            if data.get("results"):
+                loc = data["results"][0]
+                geometry = loc["geometry"]
+                return {
+                    "lat": geometry["lat"],
+                    "lng": geometry["lng"],
+                    "confidence": min(loc.get("confidence", 7) / 10.0, 1.0),
+                    "formatted_address": loc.get("formatted", address),
+                    "source": "opencage",
+                }
+
+        except Exception as e:
+            logger.warning(f"[Geocoding] OpenCage error: {e}")
+
+        return None
+
     def _geocode_google(self, address: str) -> Optional[dict]:
         """Geocoding sử dụng Google Maps API."""
+        if not hasattr(config, "GOOGLE_MAPS_API_KEY") or not config.GOOGLE_MAPS_API_KEY:
+            return None
+
         try:
             resp = self.session.get(
                 "https://maps.googleapis.com/maps/api/geocode/json",
                 params={
                     "address": address,
-                    "key":     config.GOOGLE_MAPS_API_KEY,
-                    "language":"vi",
-                    "region":  "vn",
+                    "key": config.GOOGLE_MAPS_API_KEY,
+                    "language": "vi",
+                    "region": "vn",
                 },
-                timeout=config.REQUEST_TIMEOUT
+                timeout=config.REQUEST_TIMEOUT,
             )
             resp.raise_for_status()
             data = resp.json()
@@ -184,11 +370,13 @@ class GeocodingProcessor:
             if data.get("status") == "OK" and data.get("results"):
                 loc = data["results"][0]["geometry"]["location"]
                 return {
-                    "lat":               loc["lat"],
-                    "lng":               loc["lng"],
-                    "confidence":        0.9,
-                    "formatted_address": data["results"][0].get("formatted_address", address),
-                    "source":            "google",
+                    "lat": loc["lat"],
+                    "lng": loc["lng"],
+                    "confidence": 0.9,
+                    "formatted_address": data["results"][0].get(
+                        "formatted_address", address
+                    ),
+                    "source": "google",
                 }
 
         except Exception as e:
@@ -205,21 +393,25 @@ class GeocodingProcessor:
 
         for district, (lat, lng) in self.DANANG_DISTRICTS.items():
             if district in address_lower:
-                logger.info(f"[Geocoding] Fallback match: '{district}' → ({lat}, {lng})")
+                logger.info(
+                    f"[Geocoding] Fallback match: '{district}' → ({lat}, {lng})"
+                )
                 return {
-                    "lat":               lat,
-                    "lng":               lng,
-                    "confidence":        0.3,  # Thấp - chỉ trung tâm quận
+                    "lat": lat,
+                    "lng": lng,
+                    "confidence": 0.3,  # Thấp - chỉ trung tâm quận
                     "formatted_address": f"{district.title()}, Đà Nẵng, Việt Nam",
-                    "source":            "fallback",
+                    "source": "fallback",
                 }
 
         return None
 
-    def batch_geocode(self, addresses: list[str], delay: float = 1.1) -> list[Optional[dict]]:
+    def batch_geocode(
+        self, addresses: list[str], delay: float = 1.1
+    ) -> list[Optional[dict]]:
         """
         Geocoding hàng loạt với rate limiting.
-        
+
         Args:
             addresses: Danh sách địa chỉ
             delay:     Thời gian chờ giữa các request (giây)
@@ -228,7 +420,9 @@ class GeocodingProcessor:
         for i, addr in enumerate(addresses):
             result = self.geocode(addr)
             results.append(result)
-            logger.info(f"[Geocoding] Batch {i+1}/{len(addresses)}: {addr[:50]}... → {result}")
+            logger.info(
+                f"[Geocoding] Batch {i + 1}/{len(addresses)}: {addr[:50]}... → {result}"
+            )
             if i < len(addresses) - 1:
                 time.sleep(delay)
         return results
@@ -252,6 +446,114 @@ class GeocodingProcessor:
                 return match.group(0).strip()
 
         return None
+
+    def geocode_dataframe(self, df):
+        """
+        Geocode toàn bộ DataFrame - thêm cột latitude, longitude, geocoding_confidence.
+
+        Xử lý địa chỉ kép (nhiều địa điểm trong 1 chuỗi):
+        - Tách thành nhiều địa chỉ riêng biệt
+        - Geocode từng địa chỉ, chọn kết quả có confidence cao nhất làm tọa độ chính
+        - Schema DB chỉ có 1 cỗt lat/lng nên dùng địa chỉ đầu tiên hợp lệ
+
+        Returns:
+            df: DataFrame đã thêm cột lat/lng
+        """
+        import pandas as pd
+
+        # Tìm cột địa chỉ
+        address_col = None
+        for col in ["location", "address_raw", "address"]:
+            if col in df.columns:
+                address_col = col
+                break
+
+        if not address_col:
+            logger.warning(
+                "[Geocoding] DataFrame không có cột địa chỉ (location/address_raw/address)"
+            )
+            return df
+
+        logger.info(f"[Geocoding] Geocoding {len(df)} jobs từ cột '{address_col}'...")
+
+        unique_locations = df[address_col].dropna().unique()
+        logger.info(f"   → {len(unique_locations)} unique locations")
+
+        # Geocode từng unique location (tránh gọi API nhiều lần)
+        location_map = {}  # address_raw -> (lat, lng, confidence, all_locations)
+
+        for loc in unique_locations:
+            loc_str = str(loc).strip()
+            if not loc_str or loc_str == "nan":
+                location_map[loc_str] = (None, None, 0.0, [])
+                continue
+
+            # Bước 1: Tách địa chỉ kép thành nhiều địa chỉ riêng
+            sub_addresses = self._split_addresses(loc_str)
+
+            if len(sub_addresses) > 1:
+                logger.info(
+                    f"[Geocoding] Phát hiện {len(sub_addresses)} địa chỉ trong 1 ô:"
+                )
+                for i, sa in enumerate(sub_addresses):
+                    logger.info(f"   [{i+1}] {sa[:80]}")
+
+            # Bước 2: Geocode từng sub-address, chọn kết quả tốt nhất
+            best_result = None
+            all_locations = []
+            
+            for sub_addr in sub_addresses:
+                result = self.geocode(sub_addr)
+                if result:
+                    all_locations.append({
+                        "address": sub_addr,
+                        "lat": result.get("lat"),
+                        "lng": result.get("lng"),
+                        "confidence": result.get("confidence", 0.0)
+                    })
+                    
+                    # Chọn kết quả có confidence cao nhất
+                    if best_result is None or result.get("confidence", 0) > best_result.get("confidence", 0):
+                        best_result = result
+                        logger.info(
+                            f"   [Geocoding] Sub-result: {sub_addr[:50]} "
+                            f"→ ({result['lat']:.4f}, {result['lng']:.4f}) "
+                            f"conf={result.get('confidence', 0):.2f}"
+                        )
+
+            if best_result:
+                location_map[loc_str] = (
+                    best_result.get("lat"),
+                    best_result.get("lng"),
+                    best_result.get("confidence", 0.0),
+                    all_locations
+                )
+            else:
+                location_map[loc_str] = (None, None, 0.0, [])
+                logger.warning(f"[Geocoding] Không geocode được: {loc_str[:60]}")
+
+        # Map vào DataFrame
+        df = df.copy()
+        df["latitude"] = df[address_col].map(
+            lambda x: location_map.get(str(x).strip(), (None, None, 0.0, []))[0]
+        )
+        df["longitude"] = df[address_col].map(
+            lambda x: location_map.get(str(x).strip(), (None, None, 0.0, []))[1]
+        )
+        df["geocoding_confidence"] = df[address_col].map(
+            lambda x: location_map.get(str(x).strip(), (None, None, 0.0, []))[2]
+        )
+        df["all_locations"] = df[address_col].map(
+            lambda x: location_map.get(str(x).strip(), (None, None, 0.0, []))[3]
+        )
+
+        # Thống kê
+        geocoded = df["latitude"].notna().sum()
+        high_conf = (df["geocoding_confidence"] >= 0.7).sum()
+        failed = df["latitude"].isna().sum()
+        logger.info(f"   Geocoded: {geocoded}/{len(df)} | Confidence>=0.7: {high_conf} | Thất bại: {failed}")
+
+        return df
 
 
 # ── Singleton Instance ────────────────────────────────────────────────────────

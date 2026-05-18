@@ -19,11 +19,11 @@ class DBHandler:
     def __init__(self):
         self.conn_str = os.getenv("ODBC_CONNECTION_STRING")
         if not self.conn_str:
-            db_driver   = os.getenv('DB_DRIVER', 'ODBC Driver 17 for SQL Server')
-            db_server   = os.getenv('DB_SERVER', r'localhost\MVY_350')
-            db_name     = os.getenv('DB_NAME', 'job_agent_db')
-            db_user     = os.getenv('DB_USER', 'sa')
-            db_password = os.getenv('DB_PASSWORD', '123456')
+            db_driver = os.getenv("DB_DRIVER", "ODBC Driver 17 for SQL Server")
+            db_server = os.getenv("DB_SERVER", r"localhost\MVY_350")
+            db_name = os.getenv("DB_NAME", "job_agent_db")
+            db_user = os.getenv("DB_USER", "sa")
+            db_password = os.getenv("DB_PASSWORD", "123456")
             self.conn_str = (
                 f"DRIVER={{{db_driver}}};"
                 f"SERVER={db_server};"
@@ -77,10 +77,12 @@ class DBHandler:
             title, company,
             salary_raw, salary_min, salary_max,
             address_raw, address_clean,
+            latitude, longitude, geocoding_confidence,
             skills, description, requirements,
             job_type, experience_year, education, industry,
             deadline, phone,
             source_url, source_name, external_id,
+            posted_date,
             status, scraped_at
         )
         SELECT
@@ -88,10 +90,12 @@ class DBHandler:
             ?, ?, ?,
             ?, ?,
             ?, ?, ?,
+            ?, ?, ?,
             ?, ?, ?, ?,
             ?, ?,
             ?, ?, ?,
-            'pending', GETUTCDATE()
+            ?,
+            'approved', GETUTCDATE()
         WHERE NOT EXISTS (
             SELECT 1 FROM jobs
             WHERE source_name = ? AND external_id = ?
@@ -121,35 +125,85 @@ class DBHandler:
                 def trunc(val, n):
                     return (str(val) if val is not None else "")[:n]
 
+                # Tọa độ GPS từ geocoding
+                latitude = job.get("latitude")
+                longitude = job.get("longitude")
+                geocoding_confidence = job.get("geocoding_confidence", 0)
+
+                # Null-safe: chuyển NaN/None thành None cho SQL
+                import math
+                def safe_float(v):
+                    if v is None: return None
+                    try:
+                        f = float(v)
+                        return None if math.isnan(f) else f
+                    except (ValueError, TypeError):
+                        return None
+
+                latitude = safe_float(latitude)
+                longitude = safe_float(longitude)
+                geocoding_confidence = safe_float(geocoding_confidence) or 0
+
+                # posted_date
+                from datetime import datetime as _dt
+                posted_date_val = job.get("posted_date") or None
+                if posted_date_val:
+                    s = str(posted_date_val).strip()
+                    if s in ("", "nan", "None", "1900-01-01"):
+                        posted_date_val = None
+                    else:
+                        # Thử parse datetime cho SQL Server
+                        try:
+                            posted_date_val = _dt.strptime(s[:10], "%Y-%m-%d")
+                        except ValueError:
+                            try:
+                                posted_date_val = _dt.strptime(s[:10], "%d/%m/%Y")
+                            except ValueError:
+                                posted_date_val = None
+
+                # deadline
+                deadline_val = job.get("deadline") or None
+                if deadline_val:
+                    s = str(deadline_val).strip()
+                    if s in ("", "nan", "None", "1900-01-01", "1900-01-01 00:00:00"):
+                        deadline_val = None
+                    else:
+                        try:
+                            deadline_val = _dt.strptime(s[:10], "%Y-%m-%d")
+                        except ValueError:
+                            try:
+                                deadline_val = _dt.strptime(s[:10], "%d/%m/%Y")
+                            except ValueError:
+                                deadline_val = None
+
                 params = (
-                    trunc(job.get("title"),       500),
-                    trunc(job.get("company"),      300),
-
-                    trunc(job.get("salary"),       200),   # salary_raw
-                    salary_min,                             # salary_min (float | None)
-                    salary_max,                             # salary_max (float | None)
-
-                    trunc(job.get("location"),     500),   # address_raw
-                    trunc(job.get("address_clean") or job.get("location"), 500),  # address_clean
-
-                    skills_str,                             # skills (JSON)
-                    job.get("description", ""),             # description (TEXT, không truncate)
-                    job.get("requirements", ""),            # requirements (TEXT, không truncate)
-
-                    trunc(job.get("job_type"),     100),   # job_type
-                    trunc(job.get("experience_year"), 200), # experience_year
-                    trunc(job.get("education"),    200),   # education
-                    trunc(job.get("industry"),     200),   # industry
-
-                    trunc(job.get("deadline"),     50),    # deadline
-                    trunc(job.get("phone"),        50),    # phone
-
-                    trunc(job.get("job_url"),      1000),  # source_url
-                    trunc(job.get("source"),       100),   # source_name
-                    external_id,                            # external_id
-
+                    trunc(job.get("title"), 500),
+                    trunc(job.get("company"), 300),
+                    trunc(job.get("salary"), 200),  # salary_raw
+                    salary_min,  # salary_min (float | None)
+                    salary_max,  # salary_max (float | None)
+                    trunc(job.get("location"), 500),  # address_raw
+                    trunc(
+                        job.get("address_clean") or job.get("location"), 500
+                    ),  # address_clean
+                    latitude,           # latitude
+                    longitude,          # longitude
+                    geocoding_confidence,  # geocoding_confidence
+                    skills_str,         # skills (JSON)
+                    job.get("description", ""),   # description
+                    job.get("requirements", ""),  # requirements
+                    trunc(job.get("job_type"), 100),
+                    trunc(job.get("experience_year"), 200),
+                    trunc(job.get("education"), 200),
+                    trunc(job.get("industry"), 200),
+                    deadline_val,
+                    trunc(job.get("phone"), 50),
+                    trunc(job.get("job_url"), 1000),  # source_url
+                    trunc(job.get("source"), 100),    # source_name
+                    external_id,
+                    posted_date_val,  # posted_date
                     # WHERE NOT EXISTS
-                    trunc(job.get("source"),       100),
+                    trunc(job.get("source"), 100),
                     external_id,
                 )
 
@@ -158,6 +212,31 @@ class DBHandler:
                 if cursor.rowcount > 0:
                     stats["inserted"] += 1
                     logger.info(f"   💾 Inserted: {job.get('title', '')[:50]}")
+                    
+                    # Cập nhật job_locations
+                    all_locations = job.get("all_locations", [])
+                    if all_locations:
+                        # Lấy job_id vừa insert (vì không dùng OUTPUT INSERTED.id được do WHERE NOT EXISTS)
+                        cursor.execute(
+                            "SELECT id FROM jobs WHERE source_name = ? AND external_id = ?",
+                            (trunc(job.get("source"), 100), external_id)
+                        )
+                        row = cursor.fetchone()
+                        if row:
+                            job_id = row[0]
+                            # Insert vào job_locations
+                            loc_sql = """
+                            INSERT INTO job_locations (job_id, address_text, latitude, longitude, geocoding_confidence)
+                            VALUES (?, ?, ?, ?, ?)
+                            """
+                            for loc in all_locations:
+                                cursor.execute(loc_sql, (
+                                    job_id,
+                                    trunc(loc.get("address"), 500),
+                                    loc.get("lat"),
+                                    loc.get("lng"),
+                                    loc.get("confidence", 0)
+                                ))
                 else:
                     stats["skipped"] += 1
                     logger.info(f"   ⏭️  Skipped (exists): {job.get('title', '')[:50]}")
@@ -181,7 +260,14 @@ class DBHandler:
             return None, None
 
         lower = salary_text.lower()
-        negotiable = ["thỏa thuận", "thoả thuận", "thương lượng", "negotiable", "competitive", "attractive"]
+        negotiable = [
+            "thỏa thuận",
+            "thoả thuận",
+            "thương lượng",
+            "negotiable",
+            "competitive",
+            "attractive",
+        ]
         if any(kw in lower for kw in negotiable):
             return None, None
 
@@ -195,7 +281,7 @@ class DBHandler:
 
         def to_million(val: float) -> float:
             if is_usd:
-                return round(val * 0.025, 2)   # 1 USD = 25,000 VND = 0.025 triệu
+                return round(val * 0.025, 2)  # 1 USD = 25,000 VND = 0.025 triệu
             return round(val / 1000, 2) if val >= 1000 else val
 
         nums = [to_million(float(n)) for n in numbers]
@@ -236,14 +322,19 @@ class DBHandler:
             return set()
         try:
             cursor = self.conn.cursor()
-            cursor.execute("""
+            cursor.execute(
+                """
                 SELECT source_url FROM jobs
                 WHERE source_name = ?
                   AND scraped_at >= DATEADD(day, ?, GETUTCDATE())
                   AND source_url IS NOT NULL AND source_url != ''
-            """, (source_name, -abs(max_age_days)))
+            """,
+                (source_name, -abs(max_age_days)),
+            )
             urls = {row[0].strip() for row in cursor.fetchall() if row[0]}
-            logger.info(f"   📋 [{source_name}] {len(urls)} URLs đã crawl trong {max_age_days}d")
+            logger.info(
+                f"   📋 [{source_name}] {len(urls)} URLs đã crawl trong {max_age_days}d"
+            )
             return urls
         except Exception as e:
             logger.warning(f"   ⚠️ get_crawled_urls failed: {e} — fallback crawl all")
