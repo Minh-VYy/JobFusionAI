@@ -13,6 +13,7 @@ import os
 from datetime import datetime
 from typing import List, Dict, Optional, Tuple
 
+# pyrefly: ignore [missing-import]
 from playwright.sync_api import sync_playwright, Page, Locator
 
 from models.job_model import JobModel
@@ -181,23 +182,10 @@ class FacebookCrawler:
         # Persistent caches
         self._load_fingerprints_from_db()
         self._load_cross_detector_baseline()
-        self._load_verified_entities()
 
     # ============================================================
     # PERSISTENT DUPLICATE CACHE (Upgrade #6)
     # ============================================================
-
-    def _load_verified_entities(self):
-        """Tải các thực thể đã xác thực từ cơ sở dữ liệu làm bộ nhớ cho cleaner."""
-        self.verified_entities = {"phone": {}, "address": {}}
-        try:
-            with FacebookDB() as db:
-                self.verified_entities = db.get_verified_entities()
-                total_learned = len(self.verified_entities.get("phone", {})) + len(self.verified_entities.get("address", {}))
-                logger.info(f"🧠 [Active-Learning] Loaded {total_learned} verified entities from DB loop.")
-        except Exception as e:
-            logger.warning(f"Failed to load verified entities: {e}")
-
 
     def _load_fingerprints_from_db(self):
         """Load fingerprints từ DB để DuplicateDetector nhớ bài cũ sau restart."""
@@ -499,6 +487,20 @@ class FacebookCrawler:
                 post = self._parse_article_locator(article)
                 if not post:
                     continue
+                # Chống lỗi Facebook DOM tái tạo (Detached elements)
+                try:
+                    article.wait_for(state="attached", timeout=1500)
+                except Exception:
+                    logger.debug(f"   ⚠️ Article #{i}: Element đã bị xóa/đổi bởi Facebook DOM, bỏ qua")
+                    continue
+
+                # FIX: Click 'Xem thêm' ngay trong bài này trước khi đọc
+                self._expand_see_more_article(article)
+
+                post = self._parse_article_locator(article)
+                if not post:
+                    logger.debug(f"   ⚠️ Article #{i}: Lấy từ Facebook bị Null/Empty!")
+                    continue
 
                 content = post.get("content", "")
 
@@ -516,7 +518,7 @@ class FacebookCrawler:
                     content = post.get("content", "")
 
                 # Lọc bài quá ngắn hoặc vẫn còn từ khóa "Xem thêm"
-                if len(content) > 40:
+                if len(content) >= 15:
                     posts.append(post)
                 else:
                     logger.debug(f"   ⏭ Article #{i}: content quá ngắn ({len(content)} chars), bỏ qua")
@@ -577,56 +579,68 @@ class FacebookCrawler:
         bị ẩn bởi CSS 'Xem thêm' → giảm phụ thuộc vào việc click nút.
         """
         content = ""
-
-        try:
-            # ── Chiến lược 1: JS evaluate → text_content (bypass CSS visibility) ──
-            # Dùng JS lấy innerText để giữ nguyên xuống dòng (newline) quan trọng cho Regex
-            full_text = article.evaluate("""el => {
-                const divs = el.querySelectorAll("div[dir='auto']");
-                let best = '';
-                for (const d of divs) {
-                    const t = (d.innerText || '').trim();
-                    if (t.length > best.length) best = t;
-                }
-                return best;
-            }""")
-            if full_text and len(full_text.strip()) > 20:
-                content = full_text.strip()
-                logger.debug(f"   [tc] Got {len(content)} chars via textContent")
-        except Exception as e:
-            logger.debug(f"   [tc] JS evaluate failed: {e}")
-
-        # ── Chiến lược 2: inner_text fallback (nếu JS thất bại) ──────────────
-        if not content:
+        
+        # ── Ưu tiên 1: Lấy bằng Selector chính xác ──────────────────────
+        for sel in CONTENT_SELECTORS:
             try:
-                els = article.locator("div[dir='auto']")
+                el = article.locator(sel).first
+                if el.count() > 0:
+                    t = el.inner_text(timeout=1500).strip()
+                    if t and len(t) > len(content):
+                        content = t
+            except Exception:
+                continue
+
+        # ── Ưu tiên 2: JS Evaluate (Nếu text vẫn quá ngắn) ──────────────
+        if len(content) < 15:
+            try:
+                full_text = article.evaluate("""el => {
+                    const divs = el.querySelectorAll("div[dir='auto']");
+                    let best = '';
+                    for (const d of divs) {
+                        const t = (d.innerText || '').trim();
+                        if (t.length > best.length) best = t;
+                    }
+                    return best;
+                }""")
+                if full_text and len(full_text.strip()) > len(content):
+                    content = full_text.strip()
+                    logger.debug(f"   [tc] Got {len(content)} chars via textContent")
+            except Exception as e:
+                logger.debug(f"   [tc] JS evaluate failed: {e}")
+
+        # ── Ưu tiên 3: Fallback thủ công Playwright locator ──────────────
+        if len(content) < 15:
+            try:
+                els = article.locator("div[dir='auto'], span[dir='auto'], div[data-ad-comet-preview='message']")
                 if els.count() > 0:
                     texts = []
-                    for i in range(min(els.count(), 10)):
+                    for i in range(min(els.count(), 15)):
                         try:
-                            t = els.nth(i).inner_text(timeout=1500).strip()
-                            if t:
-                                texts.append(t)
+                            t = els.nth(i).inner_text(timeout=1000).strip()
+                            if t: texts.append(t)
                         except Exception:
                             pass
                     if texts:
-                        content = max(texts, key=len)
+                        best_t = max(texts, key=len)
+                        if len(best_t) > len(content):
+                            content = best_t
             except Exception:
                 pass
 
-        # ── Chiến lược 3: CONTENT_SELECTORS fallback ─────────────────────────
-        if not content:
-            for sel in CONTENT_SELECTORS:
-                try:
-                    el = article.locator(sel).first
-                    if el.count() > 0:
-                        content = el.inner_text(timeout=2000).strip()
-                        if content:
-                            break
-                except Exception:
-                    continue
+        # ── Ưu tiên 4: Cứu cánh cuối cùng - Lấy toàn bộ Text của Article ──
+        if len(content) < 15:
+            try:
+                raw_all_text = article.inner_text(timeout=2000).strip()
+                if len(raw_all_text) > len(content):
+                    content = raw_all_text
+                    logger.debug(f"   [tc] Used raw article inner_text Fallback: {len(content)} chars")
+            except Exception as e:
+                logger.debug(f"   [tc] fallback 4 failed: {e}")
+                pass
 
-        if not content:
+        if not content or len(content) < 15:
+            logger.debug(f"   [tc] content empty or too short ({len(content)} chars), returning None")
             return None
 
 
@@ -814,11 +828,11 @@ class FacebookCrawler:
         job = JobModel(source=self.SOURCE_NAME)
         job.title         = self.cleaner.extract_title(content)
         job.description   = self.cleaner._clean_text(content)
-        job.contact_phone = self.cleaner.extract_phone(content)
-        job.company       = self.cleaner.extract_company(content, getattr(self, "verified_entities", None))
+        job.company       = self.cleaner.extract_company(content)
         job.salary        = self.cleaner.extract_salary(content)
         job.location      = self.cleaner.extract_location(content)
         job.skills        = self.cleaner.extract_skills(content)
+        job.contact_phone = self.cleaner.extract_phone(content)
         job.job_type      = self.cleaner.extract_job_type(content)
         job.requirements  = self.cleaner.extract_requirements(content)
         job.job_url       = post.get("post_url", "")
@@ -902,8 +916,10 @@ class FacebookCrawler:
             except ValueError:
                 continue
 
-        # Giữ nguyên nếu không parse được
-        return raw[:50]
+        # Giữ nguyên nếu không parse được -> Sẽ gây lỗi SQL Server "Conversion failed" nếu đẩy text thô vào DATETIME
+        # Thay vì trả về raw, ta trả về "" để db_handler chuyển thành NULL an toàn.
+        logger.debug(f"   [time] Không thể parse thời gian nội bộ Facebook: {raw!r}")
+        return ""
 
 
 
