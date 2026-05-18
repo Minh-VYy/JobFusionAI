@@ -70,7 +70,24 @@
     "last_crawled": "2026-05-10T18:59:58.469388"
   },
   "https://www.facebook.com/groups/360978689839999": {
-    "seen_ids": [],
-    "last_crawled": "2026-05-17T17:26:45.062468"
+    "seen_ids": [
+      "675836501cf87e80",
+      "138046b015755eb7",
+      "a1771b150ef7c166",
+      "2cafd9ad6ab18bb3",
+      "734651fde97a29aa",
+      "c5572eda49fdd27f",
+      "b5c963d48560bad8",
+      "108a1900dd7dd87a",
+      "b3bcb0c143caaaa9",
+      "df03c22e59e92770",
+      "28a8427f8cb2d9a8",
+      "af255325c74ef7e7",
+      "370c1034bbd7a4da",
+      "f960befb94ecc37b",
+      "dd98a4337cdb56e2",
+      "3f352646f6f8b02f"
+    ],
+    "last_crawled": "2026-05-18T11:08:18.310629"
   }
 }
