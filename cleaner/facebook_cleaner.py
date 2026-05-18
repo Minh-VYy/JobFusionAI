@@ -108,7 +108,8 @@ class FacebookCleaner:
             'thành phố', 'trung tâm', 'khu vực', 'địa chỉ', 'địa điểm',
             'đà nẵng', 'hà nội', 'hồ chí minh', 'bình dương',
             'hải châu', 'cẩm lệ', 'ngũ hành sơn', 'liên chiểu', 'sơn trà',
-            'tuyển dụng', 'thông báo', 'khai trương',
+            'tuyển dụng', 'thông báo', 'khai trương', 'thị trường',
+            'thị trường tại', 'thị trường đà nẵng',
         }
 
         def _is_blacklisted(name: str) -> bool:
@@ -149,7 +150,7 @@ class FacebookCleaner:
         # --- Bước 2: Prefix nhận diện loại hình ---
         prefix_pattern = re.compile(
             r'(?:nhà hàng|quán|shop|cửa hàng|công ty|cty|spa|salon|gym|'
-            r'(?<!môi\s)trường(?!\s+trẻ)|trung tâm|khách sạn|resort|cafe|coffee|tiệm|xưởng|'
+            r'(?<!môi\s)(?<!thị\s)trường(?!\s+trẻ)|trung tâm|khách sạn|resort|cafe|coffee|tiệm|xưởng|'
             r'công ty tnhh|công ty cp)\s+([^\n,]{3,80})',
             re.IGNORECASE
         )
@@ -157,7 +158,8 @@ class FacebookCleaner:
         if m:
             start, end = m.start(1), m.end(1)
             name = self._clean_text(content[start:end]).strip().rstrip(":,")
-            name = re.split(r'\s+(?:cần|tuyển|đang|thông)', name, flags=re.IGNORECASE)[0]
+            # Cắt tại stop words bao gồm cả 'thị trường' và 'tại'
+            name = re.split(r'\s+(?:cần|tuyển|đang|thông|tại\b|thị\s*trường)', name, flags=re.IGNORECASE)[0]
             if 2 < len(name) < 100 and not _is_blacklisted(name):
                 return name
 
@@ -165,19 +167,24 @@ class FacebookCleaner:
         # --- Bước 3: Dòng đầu viết hoa hoàn toàn VÀ ngắn = tên thương hiệu ---
         if (lines[0].isupper() and 3 < len(lines[0]) < 80
                 and len(lines[0].split()) <= 4
-                and not re.match(r'^(?:TUYỂN|CẦN|ĐANG|KHAI\s*TRƯƠNG|TẠI)', lines[0].strip(), re.IGNORECASE)
+                and not re.search(
+                    r'(?:TUYỂN|CẦN|ĐANG|KHAI|TRƯỜNG|THỊ|TRƯỜNG|TẠI|ĐÀ|NẰNG|THỊ|VỰ)',
+                    lines[0], re.IGNORECASE | re.UNICODE)
                 and not _is_blacklisted(first_cleaned)):
             return first_cleaned
 
         # --- Bước 3b: Dòng đầu viết hoa có dạng "TÊN_CTY TUYỂN [CHỨC VỤ]" ---
         # VD: "BUDWEISER TUYỂN PG PART-TIME" → lấy "BUDWEISER"
         m3b = re.match(
-            r'^([\wÀ-ỹ&]{2,40})\s+(?:tuyển|cần|tìm)',
+            r'^([\wÀ-ỹ&]{2,40})\s+(?:tuyển|cần\s+tuyển|tìm)',
             lines[0], re.IGNORECASE
         )
         if m3b:
             candidate = m3b.group(1).strip()
-            if 2 < len(candidate) < 80 and not _is_blacklisted(candidate):
+            _noise = {'cần', 'đang', 'sẽ', 'rất', 'hãy', 'và', 'có', 'là', 'khai'}
+            if (2 < len(candidate) < 80
+                    and candidate.lower() not in _noise
+                    and not _is_blacklisted(candidate)):
                 return self._clean_text(candidate)
 
         # --- Bước 4: Fallback ---
@@ -187,7 +194,7 @@ class FacebookCleaner:
             'cần ', 'ưu tiên', 'thông báo', 'nhận hồ sơ',
             'khi nào', 'như thế nào', 'thực sự', 'may mắn', 'nhận ra',
             'là khi', 'chần chờ', 'chờ gì', 'nhận ra mình', 'mom ',
-            'tuyển ', 'cần tuyển', 'khai trương', 'tại đà nẵng',
+            'tuyển ', 'cần tuyển', 'khai', 'tại đà nẵng',
             'tại hà nội', 'tại tp', 'thị trường',
         ]
         is_descriptive = len(lines[0].split()) > 5 or lines[0].rstrip().endswith('.')
