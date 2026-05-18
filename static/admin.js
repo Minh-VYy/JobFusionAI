@@ -279,14 +279,58 @@ async function loadReviewJobs() {
       <div class="review-card" id="review-${j.id}">
         <div class="review-card-header">
           <div>
-            <div class="review-title">${j.title}</div>
-            <div class="review-company">${j.company} • ${j.source_name}</div>
+            <div class="review-title" id="title-text-${j.id}">${j.title}</div>
+            <div class="review-company" id="company-text-${j.id}">${j.company || 'Chưa rõ'} • ${j.source_name}</div>
           </div>
           <span class="status-badge status-${j.status}">${j.status}</span>
         </div>
         <div class="review-issue">⚠️ ${j.review_notes || 'Cần kiểm duyệt'}</div>
-        <div class="review-actions">
+        
+        <!-- FORM HIỆU CHỈNH ẨN (Để Admin Sửa trực tiếp) -->
+        <div class="review-edit-form" id="edit-form-${j.id}" style="display: none;">
+          <div class="review-form-row">
+            <div class="review-form-group">
+              <label>Vị trí tuyển dụng</label>
+              <input type="text" id="edit-title-${j.id}" value="${j.title || ''}">
+            </div>
+            <div class="review-form-group">
+              <label>Công ty</label>
+              <input type="text" id="edit-company-${j.id}" value="${j.company || ''}">
+            </div>
+          </div>
+          <div class="review-form-row">
+            <div class="review-form-group">
+              <label>Lương gốc (text)</label>
+              <input type="text" id="edit-salary-raw-${j.id}" value="${j.salary_raw || ''}">
+            </div>
+            <div class="review-form-group">
+              <label>Lương Min (Tr.)</label>
+              <input type="number" step="0.1" id="edit-salary-min-${j.id}" value="${j.salary_min || ''}">
+            </div>
+            <div class="review-form-group">
+              <label>Lương Max (Tr.)</label>
+              <input type="number" step="0.1" id="edit-salary-max-${j.id}" value="${j.salary_max || ''}">
+            </div>
+          </div>
+          <div class="review-form-row">
+            <div class="review-form-group">
+              <label>Địa chỉ chuẩn hóa</label>
+              <input type="text" id="edit-address-${j.id}" value="${j.address_clean || ''}">
+            </div>
+            <div class="review-form-group">
+              <label>Kỹ năng (Cách nhau bằng dấu phẩy)</label>
+              <input type="text" id="edit-skills-${j.id}" value="${(j.skills || []).join(', ')}">
+            </div>
+          </div>
+          <div class="review-actions" style="margin-top: 0.5rem;">
+            <button class="btn btn-success btn-sm" onclick="submitReviewEdit(${j.id})">💾 Lưu & Duyệt</button>
+            <button class="btn btn-outline btn-sm" onclick="toggleReviewEdit(${j.id})">Hủy</button>
+          </div>
+        </div>
+
+        <div class="review-actions" id="actions-bar-${j.id}">
           <button class="btn btn-success btn-sm" onclick="reviewJob(${j.id}, 'approve')">✅ Duyệt</button>
+          <button class="btn btn-warning btn-sm" onclick="toggleReviewEdit(${j.id})">✏️ Sửa</button>
           <button class="btn btn-danger btn-sm" onclick="reviewJob(${j.id}, 'reject')">❌ Từ chối</button>
           <a href="${j.source_url}" target="_blank" class="btn btn-outline btn-sm">🔗 Xem nguồn</a>
         </div>
@@ -298,15 +342,51 @@ async function loadReviewJobs() {
   }
 }
 
-async function reviewJob(id, action) {
+function toggleReviewEdit(id) {
+  const form = document.getElementById(`edit-form-${id}`);
+  const actionBar = document.getElementById(`actions-bar-${id}`);
+  if (form.style.display === 'none') {
+    form.style.display = 'flex';
+    actionBar.style.display = 'none';
+  } else {
+    form.style.display = 'none';
+    actionBar.style.display = 'flex';
+  }
+}
+
+async function submitReviewEdit(id) {
+  const title = document.getElementById(`edit-title-${id}`).value;
+  const company = document.getElementById(`edit-company-${id}`).value;
+  const salary_raw = document.getElementById(`edit-salary-raw-${id}`).value;
+  const salary_min_val = document.getElementById(`edit-salary-min-${id}`).value;
+  const salary_max_val = document.getElementById(`edit-salary-max-${id}`).value;
+  const address_clean = document.getElementById(`edit-address-${id}`).value;
+  const skills_val = document.getElementById(`edit-skills-${id}`).value;
+
+  const salary_min = salary_min_val ? parseFloat(salary_min_val) : null;
+  const salary_max = salary_max_val ? parseFloat(salary_max_val) : null;
+  const skills = skills_val.split(',').map(s => s.trim()).filter(Boolean);
+
+  const fields = { title, company, salary_raw, salary_min, salary_max, address_clean, skills };
+  await reviewJob(id, 'approve', fields);
+}
+
+async function reviewJob(id, action, fields = {}) {
   try {
-    await apiFetch(`/admin/jobs/${id}/review`, { 
+    const payload = { action, ...fields };
+    const r = await apiFetch(`/admin/jobs/${id}/review`, { 
       method: 'POST', 
-      body: JSON.stringify({ action }) 
+      body: JSON.stringify(payload) 
     });
     
     document.getElementById(`review-${id}`)?.remove();
-    toast(action === 'approve' ? '✅ Đã duyệt' : '❌ Đã từ chối', action === 'approve' ? 'success' : 'warning');
+    
+    let msg = action === 'approve' ? '✅ Đã duyệt' : '❌ Đã từ chối';
+    if (r.corrections_made?.length > 0) {
+      msg += ` (${r.corrections_made.length} sửa đổi đã lưu vết 🧠)`;
+    }
+    toast(msg, action === 'approve' ? 'success' : 'warning');
+    
     loadReviewBadge();
     refreshDashboard();
     

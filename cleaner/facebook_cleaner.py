@@ -109,11 +109,21 @@ class FacebookCleaner:
 
         return self._normalize_title(lines[0])[:120]
 
-    def extract_company(self, content: str) -> str:
+    def extract_company(self, content: str, verified_entities: dict = None) -> str:
         """
         Trích xuất tên công ty/cửa hàng/nhà hàng.
+        Hỗ trợ đối chiếu với bộ nhớ thực thể động để bot tự học từ Admin.
         """
         content = self._strip_facebook_noise(content)
+
+        # --- BƯỚC ĐẶC BIỆT: ACTIVE LEARNING LOOP ---
+        # Nếu bài viết có SĐT và SĐT này đã có trong bộ nhớ thực thể xác thực
+        # chúng ta dùng ngay tên công ty đã lưu mà không cần đoán nhận!
+        if verified_entities and verified_entities.get("phone"):
+            phone = self.extract_phone(content)
+            if phone and phone in verified_entities["phone"]:
+                return verified_entities["phone"][phone]
+
         lines = [l.strip() for l in content.split("\n") if l.strip()]
         if not lines:
             return ""

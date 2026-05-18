@@ -181,10 +181,23 @@ class FacebookCrawler:
         # Persistent caches
         self._load_fingerprints_from_db()
         self._load_cross_detector_baseline()
+        self._load_verified_entities()
 
     # ============================================================
     # PERSISTENT DUPLICATE CACHE (Upgrade #6)
     # ============================================================
+
+    def _load_verified_entities(self):
+        """Tải các thực thể đã xác thực từ cơ sở dữ liệu làm bộ nhớ cho cleaner."""
+        self.verified_entities = {"phone": {}, "address": {}}
+        try:
+            with FacebookDB() as db:
+                self.verified_entities = db.get_verified_entities()
+                total_learned = len(self.verified_entities.get("phone", {})) + len(self.verified_entities.get("address", {}))
+                logger.info(f"🧠 [Active-Learning] Loaded {total_learned} verified entities from DB loop.")
+        except Exception as e:
+            logger.warning(f"Failed to load verified entities: {e}")
+
 
     def _load_fingerprints_from_db(self):
         """Load fingerprints từ DB để DuplicateDetector nhớ bài cũ sau restart."""
@@ -801,11 +814,11 @@ class FacebookCrawler:
         job = JobModel(source=self.SOURCE_NAME)
         job.title         = self.cleaner.extract_title(content)
         job.description   = self.cleaner._clean_text(content)
-        job.company       = self.cleaner.extract_company(content)
+        job.contact_phone = self.cleaner.extract_phone(content)
+        job.company       = self.cleaner.extract_company(content, getattr(self, "verified_entities", None))
         job.salary        = self.cleaner.extract_salary(content)
         job.location      = self.cleaner.extract_location(content)
         job.skills        = self.cleaner.extract_skills(content)
-        job.contact_phone = self.cleaner.extract_phone(content)
         job.job_type      = self.cleaner.extract_job_type(content)
         job.requirements  = self.cleaner.extract_requirements(content)
         job.job_url       = post.get("post_url", "")

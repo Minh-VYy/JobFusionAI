@@ -1361,3 +1361,56 @@ body {
     align-items: flex-start;
   }
 }
+
+/* =============================================
+   INLINE EDIT FORM FOR ACTIVE LEARNING
+   ============================================= */
+.review-edit-form {
+  margin-top: 1rem;
+  border-top: 1px solid var(--border-color);
+  padding-top: 1rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  animation: slideDown 0.25s ease;
+}
+
+@keyframes slideDown {
+  from { opacity: 0; transform: translateY(-10px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.review-form-row {
+  display: flex;
+  gap: 0.75rem;
+}
+
+.review-form-group {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  flex: 1;
+}
+
+.review-form-group label {
+  font-size: 0.75rem;
+  color: var(--text-secondary);
+  font-weight: 600;
+  text-align: left;
+}
+
+.review-form-group input {
+  background: rgba(0, 0, 0, 0.2);
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+  padding: 0.5rem 0.75rem;
+  color: var(--text-primary);
+  font-size: 0.85rem;
+  transition: border-color 0.2s;
+}
+
+.review-form-group input:focus {
+  outline: none;
+  border-color: var(--primary);
+}
+

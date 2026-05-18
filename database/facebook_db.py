@@ -227,3 +227,28 @@ class FacebookDB:
         except Exception as e:
             logger.warning(f"get_jobs_for_cross_detection failed: {e}")
             return []
+
+    def get_verified_entities(self) -> dict:
+        """Tải tất cả verified_entities để làm bộ nhớ thực thể động cho cleaner."""
+        entities = {"phone": {}, "address": {}}
+        try:
+            cursor = self.conn.cursor()
+            cursor.execute("""
+                IF EXISTS (SELECT * FROM sysobjects WHERE name='verified_entities' AND xtype='U')
+                BEGIN
+                    SELECT entity_type, entity_value, mapped_company FROM verified_entities
+                END
+                ELSE
+                BEGIN
+                    SELECT 'phone' as entity_type, '0000000000' as entity_value, 'none' as mapped_company WHERE 1=0
+                END
+            """)
+            rows = cursor.fetchall()
+            for row in rows:
+                ent_type, ent_val, company = row[0], row[1], row[2]
+                if ent_type in entities and ent_val and company:
+                    entities[ent_type][ent_val.strip()] = company.strip()
+            return entities
+        except Exception as e:
+            logger.warning(f"get_verified_entities failed: {e}")
+            return entities

@@ -254,6 +254,30 @@ class SkillRelation(Base):
     weight       = Column(Float, default=1.0)
 
 
+# ── Active Learning & Corrections ─────────────────────────────────────────────
+class JobCorrection(Base):
+    """Lưu trữ lịch sử chỉnh sửa dữ liệu của Admin để bot tự học."""
+    __tablename__ = "job_corrections"
+
+    id           = Column(Integer, primary_key=True, autoincrement=True)
+    job_id       = Column(Integer, nullable=False)
+    field_name   = Column(String(100), nullable=False)  # 'title', 'company', 'salary_min', etc.
+    old_value    = Column(Text, nullable=True)
+    new_value    = Column(Text, nullable=True)
+    corrected_at = Column(DateTime, default=datetime.utcnow)
+
+
+class VerifiedEntity(Base):
+    """Bộ nhớ thực thể động: SĐT/Địa chỉ đã xác thực thuộc về một Công ty."""
+    __tablename__ = "verified_entities"
+
+    id             = Column(Integer, primary_key=True, autoincrement=True)
+    entity_type    = Column(String(50), nullable=False)    # 'phone' hoặc 'address'
+    entity_value   = Column(NVARCHAR(500), nullable=False)  # Giá trị SĐT hoặc Địa chỉ chuẩn hóa
+    mapped_company = Column(NVARCHAR(300), nullable=False)  # Tên công ty chuẩn được gán
+    verified_at    = Column(DateTime, default=datetime.utcnow)
+
+
 # ── Database Engine (SQL Server Named Instance) ──────────────────────
 def get_engine():
     """
