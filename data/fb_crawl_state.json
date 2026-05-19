@@ -1,7 +1,13 @@
 {
   "https://www.facebook.com/groups/444340500105671": {
-    "seen_ids": [],
-    "last_crawled": null
+    "seen_ids": [
+      "16ee11154c37dc36",
+      "529637e4e3781902",
+      "24b222b9be9def5b",
+      "d118effa7aaa3890",
+      "44a116282160d1bb"
+    ],
+    "last_crawled": "2026-05-19T16:57:03.904891"
   },
   "https://www.facebook.com/groups/471999991646484": {
     "seen_ids": [],
@@ -24,7 +30,17 @@
     "last_crawled": null
   },
   "_meta": {
-    "rotation_cursor": 6,
+    "rotation_cursor": 0,
     "rotation_day": "2026-05-19"
+  },
+  "https://www.facebook.com/groups/sieuthiphuyen78": {
+    "seen_ids": [
+      "0f8030009caaba3d",
+      "592ef5fb6fa043c8",
+      "ce9c5667a82dca25",
+      "f9ff384eb12c9718",
+      "a9812c8792e61ffa"
+    ],
+    "last_crawled": "2026-05-19T17:01:57.915871"
   }
 }

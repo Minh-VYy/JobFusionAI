@@ -118,6 +118,21 @@ class BaseCrawler:
     # KHỞI TẠO & DỪNG (Context Manager)
     # ================================================================
 
+    def _setup_popup_blocker(self):
+        """Tự động phát hiện và đóng lập tức tất cả các tab phụ/popup tự động mở ra"""
+        if not hasattr(self, 'context') or not self.context:
+            return
+
+        def handle_new_page(new_page):
+            try:
+                # Đóng ngay lập tức nếu tab được mở không phải tab chính của bot hiện tại
+                if hasattr(self, 'page') and self.page and new_page != self.page:
+                    new_page.close()
+            except:
+                pass
+
+        self.context.on("page", handle_new_page)
+
     def start(self):
         """Khởi động Playwright + stealth browser context"""
         logger.info("🚀 Khởi động browser...")
@@ -133,6 +148,9 @@ class BaseCrawler:
                 # LUÔN TẠO TAB MỚI ĐỂ TRÁNH ĐÈ LÊN BOT KHÁC
                 logger.info("Mở tab mới trên trình duyệt hiện tại...")
                 self.page = self.context.new_page()
+                
+                # Bật popup blocker tự động đóng các tab phụ
+                self._setup_popup_blocker()
                 
                 logger.info("✅ Đã kết nối thành công tới trình duyệt có sẵn (Tab mới)!")
                 return
@@ -178,6 +196,9 @@ class BaseCrawler:
 
         self.page = self.context.new_page()
         self._inject_stealth_scripts()
+        
+        # Bật popup blocker tự động đóng các tab phụ
+        self._setup_popup_blocker()
 
         logger.info(f"✅ Browser ảo sẵn sàng | UA: {ua[:60]}... | VP: {vp['width']}x{vp['height']}")
 

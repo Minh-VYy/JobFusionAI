@@ -418,10 +418,12 @@ def run_task(task_id: int):
         # Khởi động crawler pipeline bất đồng bộ bằng Subprocess
         # Chạy 'python main.py now [source_name]' ở chế độ background
         try:
-            args = [sys.executable, "main.py", "now"]
+            cwd_dir = os.path.dirname(os.path.abspath(__file__))
+            main_py = os.path.join(cwd_dir, "main.py")
+            args = [sys.executable, main_py, "now"]
             if task.source_name:
                 args.append(task.source_name)
-            subprocess.Popen(args, close_fds=True if os.name != "nt" else False)
+            subprocess.Popen(args, cwd=cwd_dir, close_fds=True if os.name != "nt" else False)
             logger.info(
                 f"🚀 Triggered Crawler Pipeline for Task #{task_id} ({task.source_name or 'all'}) in background."
             )
@@ -461,9 +463,11 @@ def run_task_by_source(source_name: str):
         session.commit()
 
         try:
-            args = [sys.executable, "main.py", "now"]
+            cwd_dir = os.path.dirname(os.path.abspath(__file__))
+            main_py = os.path.join(cwd_dir, "main.py")
+            args = [sys.executable, main_py, "now"]
             args.append(source_name)
-            subprocess.Popen(args, close_fds=True if os.name != "nt" else False)
+            subprocess.Popen(args, cwd=cwd_dir, close_fds=True if os.name != "nt" else False)
             logger.info(
                 f"🚀 Triggered Crawler Pipeline for {source_name} in background."
             )
