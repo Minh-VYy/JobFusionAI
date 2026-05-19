@@ -56,6 +56,7 @@ Dự án được xây dựng theo mô hình pipeline khép kín kết hợp vò
   - Giám sát Real-time các Agent đang cào bằng Websocket.
   - Phân tích biểu đồ kỹ năng, địa điểm, mức lương tuyển dụng.
   - **Duyệt và Chỉnh sửa trực tiếp** các tin tuyển dụng bị lỗi thông tin.
+- **⚙️ Chế độ kiểm duyệt linh hoạt**: Admin có thể chọn **duyệt thủ công** hoặc **tự động duyệt**; khi bật tự động, hệ thống vẫn ghi nhận chỉnh sửa từ admin để cải thiện các lần cào sau.
 - **🔄 Active Learning (AI Tự Học)**:
   - **Lưu vết hiệu chỉnh**: Hệ thống ghi lại dữ liệu cũ (bot cào) và dữ liệu mới (admin sửa) vào bảng `job_corrections`.
   - **Bộ nhớ thực thể động (Dynamic Entity Whitelist)**: Tự động ghi nhớ SĐT, địa chỉ đã xác thực của Công ty. Ở các phiên cào sau, bot sẽ áp dụng ngay thông tin chuẩn này mà không cần tính toán lại.

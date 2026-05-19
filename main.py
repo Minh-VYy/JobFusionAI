@@ -6,6 +6,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import logging
 import requests
 import schedule
+import json
 from dotenv import load_dotenv
 
 from crawler.topcv_crawler import TopCVCrawler
@@ -44,6 +45,36 @@ CRAWLERS = [
     {"name": "VietnamWorks", "class": VietnamWorksCrawler, "pages": PAGES},
 ]
 
+BOT_CONFIG_PATH = os.path.join(
+    os.path.dirname(os.path.abspath(__file__)), "data", "bot_config.json"
+)
+
+
+def load_source_config(source_name: str) -> dict:
+    defaults = {
+        "facebook": {
+            "enabled": True,
+            "max_posts_per_group": 5,
+            "max_groups_per_session": 3,
+            "max_days_old": 3,
+        },
+        "topcv": {"enabled": True, "max_pages": PAGES, "headless": True},
+        "itviec": {"enabled": True, "max_pages": 1, "headless": True},
+        "vietnamworks": {"enabled": True, "max_pages": PAGES, "headless": True},
+    }
+
+    try:
+        with open(BOT_CONFIG_PATH, "r", encoding="utf-8") as f:
+            raw = json.load(f)
+    except Exception:
+        raw = {}
+
+    source_key = source_name.lower()
+    source_config = (
+        raw.get(source_key, {}) if isinstance(raw.get(source_key), dict) else {}
+    )
+    return {**defaults.get(source_key, {}), **source_config}
+
 
 def send_telegram_notification(text: str):
     """Gửi thông báo qua Telegram"""
@@ -65,26 +96,43 @@ def send_telegram_notification(text: str):
 
 def run_pipeline(target_bot=None):
     logger.info("=" * 55)
-    logger.info(f"🤖 FULL PIPELINE: CRAWL → NLP → GEO → DB | Target: {target_bot or 'ALL'}")
+    logger.info(
+        f"🤖 FULL PIPELINE: CRAWL → NLP → GEO → DB | Target: {target_bot or 'ALL'}"
+    )
     logger.info("=" * 55)
 
     db_handler = DBHandler()
     db_handler.connect()
 
     if target_bot and target_bot.lower() == "facebook":
+        facebook_config = load_source_config("facebook")
+        if facebook_config.get("enabled", True) is False:
+            logger.warning("⚠️ Facebook crawler đang bị tắt trong cấu hình riêng.")
+            db_handler.close()
+            return
+
         logger.info("\n🌐 Running Facebook Crawler...")
         db_handler.update_task_progress("facebook", "running", 0, 0, max_pages=1)
         try:
             from crawler.facebook_crawler import FacebookCrawler
+
             crawler = FacebookCrawler()
-            
+
             def fb_progress_cb(current_group, total_groups, current_count):
-                db_handler.update_task_progress("facebook", "running", current_count, current_group, max_pages=total_groups)
+                db_handler.update_task_progress(
+                    "facebook",
+                    "running",
+                    current_count,
+                    current_group,
+                    max_pages=total_groups,
+                )
 
             stats = crawler.crawl_and_save(progress_callback=fb_progress_cb)
             logger.info(f"   ✅ Facebook Crawler finished. Stats: {stats}")
             # Ghi nhận hoàn thành thành công
-            db_handler.update_task_progress("facebook", "completed", stats.get('inserted', 0), stats.get('total', 0))
+            db_handler.update_task_progress(
+                "facebook", "completed", stats.get("inserted", 0), stats.get("total", 0)
+            )
             # Send notification
             msg = (
                 f"🤖 *Facebook Bot Report*\n\n"
@@ -98,7 +146,9 @@ def run_pipeline(target_bot=None):
             send_telegram_notification(msg)
         except Exception as e:
             logger.error(f"❌ Facebook Crawler error: {e}")
-            db_handler.update_task_progress("facebook", "error", 0, 0, total_errors=1, error_log=str(e))
+            db_handler.update_task_progress(
+                "facebook", "error", 0, 0, total_errors=1, error_log=str(e)
+            )
         finally:
             db_handler.close()
         return
@@ -108,7 +158,9 @@ def run_pipeline(target_bot=None):
     # ── 1. CRAWL ──────────────────────────────────────────
     active_crawlers = CRAWLERS
     if target_bot:
-        active_crawlers = [c for c in CRAWLERS if c["name"].lower() == target_bot.lower()]
+        active_crawlers = [
+            c for c in CRAWLERS if c["name"].lower() == target_bot.lower()
+        ]
 
     if not active_crawlers:
         logger.warning(f"⚠️ Không tìm thấy crawler cho target: {target_bot}")
@@ -118,27 +170,48 @@ def run_pipeline(target_bot=None):
     for cfg in active_crawlers:
         source_name = cfg["name"].lower()
         logger.info(f"\n🌐 Crawl: {cfg['name']}")
-        
+        source_config = load_source_config(source_name)
+        if source_config.get("enabled", True) is False:
+            logger.info(f"   ⏭️  Bỏ qua {cfg['name']} vì đã bị tắt trong cấu hình riêng")
+            continue
+
         # Lấy max_pages cấu hình động từ database (nếu có), mặc định sử dụng cấu hình từ env (cfg["pages"])
-        max_pages = db_handler.get_task_max_pages(source_name, default_val=cfg["pages"])
+        max_pages = db_handler.get_task_max_pages(
+            source_name, default_val=source_config.get("max_pages", cfg["pages"])
+        )
         logger.info(f"   ⚙️ Configured max_pages: {max_pages}")
-        
-        db_handler.update_task_progress(source_name, "running", 0, 0, max_pages=max_pages)
+
+        db_handler.update_task_progress(
+            source_name, "running", 0, 0, max_pages=max_pages
+        )
         try:
-            crawler = cfg["class"](max_pages=max_pages, headless=HEADLESS)
-            
+            crawler = cfg["class"](
+                max_pages=max_pages, headless=source_config.get("headless", HEADLESS)
+            )
+
             def make_progress_cb(src_name):
                 def cb(current_page, total_pages, current_count):
-                    db_handler.update_task_progress(src_name, "running", current_count, current_page, max_pages=total_pages)
+                    db_handler.update_task_progress(
+                        src_name,
+                        "running",
+                        current_count,
+                        current_page,
+                        max_pages=total_pages,
+                    )
+
                 return cb
 
             jobs = crawler.crawl(progress_callback=make_progress_cb(source_name))
             all_jobs.extend(jobs)
             logger.info(f"   ✅ {len(jobs)} jobs")
-            db_handler.update_task_progress(source_name, "completed", len(jobs), max_pages)
+            db_handler.update_task_progress(
+                source_name, "completed", len(jobs), max_pages
+            )
         except Exception as e:
             logger.error(f"   ❌ Lỗi: {e}")
-            db_handler.update_task_progress(source_name, "error", 0, 0, total_errors=1, error_log=str(e))
+            db_handler.update_task_progress(
+                source_name, "error", 0, 0, total_errors=1, error_log=str(e)
+            )
 
     db_handler.close()
 
@@ -200,6 +273,7 @@ def run_pipeline(target_bot=None):
         pd_val = r.get("posted_date")
         if pd_val is not None:
             import math
+
             try:
                 if isinstance(pd_val, float) and math.isnan(pd_val):
                     r["posted_date"] = None
@@ -243,7 +317,9 @@ def main():
     # Kiểm tra nếu người dùng truyền tham số 'now' thì chạy luôn 1 lần
     if len(sys.argv) > 1 and sys.argv[1] == "now":
         target = sys.argv[2] if len(sys.argv) > 2 else None
-        logger.info(f"▶️ Chạy lập tức theo lệnh thủ công (manual run) cho target: {target or 'ALL'}...")
+        logger.info(
+            f"▶️ Chạy lập tức theo lệnh thủ công (manual run) cho target: {target or 'ALL'}..."
+        )
         run_pipeline(target)
         return
 

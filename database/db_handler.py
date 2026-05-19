@@ -59,6 +59,20 @@ class DBHandler:
 
     # ==================== INSERT ====================
 
+    def _get_moderation_mode(self) -> str:
+        config_path = os.path.join(
+            os.path.dirname(os.path.dirname(__file__)), "data", "bot_config.json"
+        )
+        default_mode = "manual"
+        try:
+            with open(config_path, "r", encoding="utf-8") as f:
+                config_data = json.load(f)
+            policy = config_data.get("moderation_policy") or {}
+            mode = str(policy.get("mode", default_mode)).lower()
+            return mode if mode in ("auto", "manual") else default_mode
+        except Exception:
+            return default_mode
+
     def insert_jobs(self, jobs_data: list[dict]) -> dict:
         """
         Insert list jobs vào bảng jobs.
@@ -71,6 +85,9 @@ class DBHandler:
 
         cursor = self.conn.cursor()
         stats = {"inserted": 0, "skipped": 0, "errors": 0}
+        moderation_mode = self._get_moderation_mode()
+        job_status = "approved" if moderation_mode == "auto" else "pending"
+        needs_review = 0 if moderation_mode == "auto" else 1
 
         sql = """
         INSERT INTO jobs (
@@ -83,7 +100,7 @@ class DBHandler:
             deadline, phone,
             source_url, source_name, external_id,
             posted_date,
-            status, scraped_at
+            status, needs_review, scraped_at
         )
         SELECT
             ?, ?,
@@ -95,7 +112,7 @@ class DBHandler:
             ?, ?,
             ?, ?, ?,
             ?,
-            'approved', GETUTCDATE()
+            ?, ?, GETUTCDATE()
         WHERE NOT EXISTS (
             SELECT 1 FROM jobs
             WHERE source_name = ? AND external_id = ?
@@ -106,8 +123,10 @@ class DBHandler:
             try:
                 # Null-safe: chuyển NaN/None/chuỗi rỗng thành None cho SQL
                 import math
+
                 def safe_float(v):
-                    if v is None or str(v).strip() == "": return None
+                    if v is None or str(v).strip() == "":
+                        return None
                     try:
                         f = float(v)
                         return None if math.isnan(f) else f
@@ -144,6 +163,7 @@ class DBHandler:
 
                 # posted_date
                 from datetime import datetime as _dt
+
                 posted_date_val = job.get("posted_date") or None
                 if posted_date_val:
                     s = str(posted_date_val).strip()
@@ -184,11 +204,11 @@ class DBHandler:
                     trunc(
                         job.get("address_clean") or job.get("location"), 500
                     ),  # address_clean
-                    latitude,           # latitude
-                    longitude,          # longitude
+                    latitude,  # latitude
+                    longitude,  # longitude
                     geocoding_confidence,  # geocoding_confidence
-                    skills_str,         # skills (JSON)
-                    job.get("description", ""),   # description
+                    skills_str,  # skills (JSON)
+                    job.get("description", ""),  # description
                     job.get("requirements", ""),  # requirements
                     trunc(job.get("job_type"), 100),
                     trunc(job.get("experience_year"), 200),
@@ -197,9 +217,11 @@ class DBHandler:
                     deadline_val,
                     trunc(job.get("phone"), 50),
                     trunc(job.get("job_url"), 1000),  # source_url
-                    trunc(job.get("source"), 100),    # source_name
+                    trunc(job.get("source"), 100),  # source_name
                     external_id,
                     posted_date_val,  # posted_date
+                    job_status,
+                    needs_review,
                     # WHERE NOT EXISTS
                     trunc(job.get("source"), 100),
                     external_id,
@@ -210,14 +232,14 @@ class DBHandler:
                 if cursor.rowcount > 0:
                     stats["inserted"] += 1
                     logger.info(f"   💾 Inserted: {job.get('title', '')[:50]}")
-                    
+
                     # Cập nhật job_locations
                     all_locations = job.get("all_locations", [])
                     if all_locations:
                         # Lấy job_id vừa insert (vì không dùng OUTPUT INSERTED.id được do WHERE NOT EXISTS)
                         cursor.execute(
                             "SELECT id FROM jobs WHERE source_name = ? AND external_id = ?",
-                            (trunc(job.get("source"), 100), external_id)
+                            (trunc(job.get("source"), 100), external_id),
                         )
                         row = cursor.fetchone()
                         if row:
@@ -228,13 +250,16 @@ class DBHandler:
                             VALUES (?, ?, ?, ?, ?)
                             """
                             for loc in all_locations:
-                                cursor.execute(loc_sql, (
-                                    job_id,
-                                    trunc(loc.get("address"), 500),
-                                    loc.get("lat"),
-                                    loc.get("lng"),
-                                    loc.get("confidence", 0)
-                                ))
+                                cursor.execute(
+                                    loc_sql,
+                                    (
+                                        job_id,
+                                        trunc(loc.get("address"), 500),
+                                        loc.get("lat"),
+                                        loc.get("lng"),
+                                        loc.get("confidence", 0),
+                                    ),
+                                )
                 else:
                     stats["skipped"] += 1
                     logger.info(f"   ⏭️  Skipped (exists): {job.get('title', '')[:50]}")
@@ -341,15 +366,27 @@ class DBHandler:
             logger.warning(f"   ⚠️ get_crawled_urls failed: {e} — fallback crawl all")
             return set()
 
-    def update_task_progress(self, source_name: str, status: str, total_scraped: int = 0, total_found: int = 0, total_errors: int = 0, error_log: str = None, max_pages: int = None) -> None:
+    def update_task_progress(
+        self,
+        source_name: str,
+        status: str,
+        total_scraped: int = 0,
+        total_found: int = 0,
+        total_errors: int = 0,
+        error_log: str = None,
+        max_pages: int = None,
+    ) -> None:
         """Cập nhật tiến độ của task trong bảng scrape_tasks"""
         if not self.conn:
             return
         from datetime import datetime
+
         try:
             cursor = self.conn.cursor()
             # Kiểm tra xem task đã tồn tại chưa
-            cursor.execute("SELECT id FROM scrape_tasks WHERE source_name = ?", (source_name,))
+            cursor.execute(
+                "SELECT id FROM scrape_tasks WHERE source_name = ?", (source_name,)
+            )
             row = cursor.fetchone()
             now = datetime.utcnow()
             if row:
@@ -363,7 +400,14 @@ class DBHandler:
                         error_log = ?, 
                         updated_at = ?
                 """
-                params = [status, total_scraped, total_found, total_errors, error_log, now]
+                params = [
+                    status,
+                    total_scraped,
+                    total_found,
+                    total_errors,
+                    error_log,
+                    now,
+                ]
                 if max_pages is not None:
                     sql += ", max_pages = ?"
                     params.append(max_pages)
@@ -380,10 +424,32 @@ class DBHandler:
                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """
                 name = f"{source_name.capitalize()} Crawler"
-                seed_url = f"https://www.{source_name}.com" if source_name != "facebook" else "https://www.facebook.com"
+                seed_url = (
+                    f"https://www.{source_name}.com"
+                    if source_name != "facebook"
+                    else "https://www.facebook.com"
+                )
                 last_run = now if status == "running" else None
                 m_pages = max_pages if max_pages is not None else 1
-                cursor.execute(sql, (name, source_name, seed_url, status, total_scraped, total_found, total_errors, error_log, last_run, now, now, m_pages, False, "Hàng ngày"))
+                cursor.execute(
+                    sql,
+                    (
+                        name,
+                        source_name,
+                        seed_url,
+                        status,
+                        total_scraped,
+                        total_found,
+                        total_errors,
+                        error_log,
+                        last_run,
+                        now,
+                        now,
+                        m_pages,
+                        False,
+                        "Hàng ngày",
+                    ),
+                )
             self.conn.commit()
         except Exception as e:
             logger.error(f"❌ Lỗi update_task_progress cho {source_name}: {e}")
@@ -394,11 +460,13 @@ class DBHandler:
             return default_val
         try:
             cursor = self.conn.cursor()
-            cursor.execute("SELECT max_pages FROM scrape_tasks WHERE source_name = ?", (source_name.lower(),))
+            cursor.execute(
+                "SELECT max_pages FROM scrape_tasks WHERE source_name = ?",
+                (source_name.lower(),),
+            )
             row = cursor.fetchone()
             if row and row[0] is not None:
                 return int(row[0])
         except Exception as e:
             logger.warning(f"⚠️ get_task_max_pages failed for {source_name}: {e}")
         return default_val
-

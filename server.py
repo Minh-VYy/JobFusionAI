@@ -5,15 +5,28 @@ import os
 import time
 import json
 import logging
+import re
 import subprocess
 from datetime import datetime, timedelta
-from typing import List, Optional
+from typing import Any, List, Optional
 
-from fastapi import FastAPI, Depends, HTTPException, status, Form, WebSocket, WebSocketDisconnect, Body
+from fastapi import (
+    FastAPI,
+    Depends,
+    HTTPException,
+    status,
+    Form,
+    WebSocket,
+    WebSocketDisconnect,
+    Body,
+)
+
 # pyrefly: ignore [missing-import]
 from fastapi.middleware.cors import CORSMiddleware
+
 # pyrefly: ignore [missing-import]
 from fastapi.staticfiles import StaticFiles
+
 # pyrefly: ignore [missing-import]
 from fastapi.responses import RedirectResponse
 from pydantic import BaseModel
@@ -21,12 +34,20 @@ import jwt
 
 import config
 import db_models as models
-from db_models import Job, ScrapeTask, User, UserInteraction, SkillNode, SkillRelation, JobCorrection, VerifiedEntity
+from db_models import (
+    Job,
+    ScrapeTask,
+    User,
+    UserInteraction,
+    SkillNode,
+    SkillRelation,
+    JobCorrection,
+    VerifiedEntity,
+)
 
 # --- Logging ---
 logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s"
+    level=logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s"
 )
 logger = logging.getLogger("server")
 
@@ -41,7 +62,7 @@ except Exception as e:
 app = FastAPI(
     title="JobAgent API Server",
     description="Backend API phục vụ Admin Dashboard & Public Client",
-    version="1.0.0"
+    version="1.0.0",
 )
 
 # --- CORS Middleware ---
@@ -52,6 +73,7 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
 
 # --- WebSocket Clients Manager ---
 class ConnectionManager:
@@ -72,7 +94,9 @@ class ConnectionManager:
             except Exception:
                 pass
 
+
 manager = ConnectionManager()
+
 
 # --- Auth Helper (JWT) ---
 def create_access_token(data: dict):
@@ -82,10 +106,12 @@ def create_access_token(data: dict):
     encoded_jwt = jwt.encode(to_encode, config.SECRET_KEY, algorithm=config.ALGORITHM)
     return encoded_jwt
 
+
 def get_current_user(token: str = Depends(lambda x=None: None)):
     # Đọc token từ header Authorization
     # Để đơn giản và tương thích với admin.js
     pass
+
 
 # --- API Đăng nhập (Auth) ---
 @app.post("/api/auth/login")
@@ -97,9 +123,9 @@ def login(username: str = Form(...), password: str = Form(...)):
             "access_token": token,
             "token_type": "bearer",
             "role": "admin",
-            "username": username
+            "username": username,
         }
-    
+
     # 2. Kiểm tra tài khoản thành viên thông thường từ Database
     session = models.get_session()
     try:
@@ -111,15 +137,16 @@ def login(username: str = Form(...), password: str = Form(...)):
                 "access_token": token,
                 "token_type": "bearer",
                 "role": "job_seeker",
-                "username": username
+                "username": username,
             }
     finally:
         session.close()
-        
+
     raise HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
-        detail="Tên đăng nhập hoặc mật khẩu không chính xác"
+        detail="Tên đăng nhập hoặc mật khẩu không chính xác",
     )
+
 
 # --- API Admin: Thống Kê Tổng Quan (Stats) ---
 @app.get("/api/admin/stats")
@@ -127,22 +154,36 @@ def get_admin_stats():
     session = models.get_session()
     try:
         total_jobs = session.query(Job).count()
-        geocoded_jobs = session.query(Job).filter((Job.is_geocoded == True) | (Job.latitude.isnot(None))).count()
+        geocoded_jobs = (
+            session.query(Job)
+            .filter((Job.is_geocoded == True) | (Job.latitude.isnot(None)))
+            .count()
+        )
         pending_review = session.query(Job).filter(Job.status == "pending").count()
-        running_tasks = session.query(ScrapeTask).filter(ScrapeTask.status == "running").count()
+        running_tasks = (
+            session.query(ScrapeTask).filter(ScrapeTask.status == "running").count()
+        )
         total_tasks = session.query(ScrapeTask).count()
 
-        geocoding_rate = round((geocoded_jobs / total_jobs * 100), 1) if total_jobs > 0 else 0.0
+        geocoding_rate = (
+            round((geocoded_jobs / total_jobs * 100), 1) if total_jobs > 0 else 0.0
+        )
 
         # Lấy lịch trình tự động
-        tasks_scheduled = session.query(ScrapeTask).filter(ScrapeTask.is_scheduled == True).all()
+        tasks_scheduled = (
+            session.query(ScrapeTask).filter(ScrapeTask.is_scheduled == True).all()
+        )
         scheduled_list = []
         for t in tasks_scheduled:
-            scheduled_list.append({
-                "name": t.name,
-                "trigger": t.schedule_cron or "Hàng ngày",
-                "next_run": (datetime.utcnow() + timedelta(days=1)).isoformat() # Tạm thời mock thời gian lần tới
-            })
+            scheduled_list.append(
+                {
+                    "name": t.name,
+                    "trigger": t.schedule_cron or "Hàng ngày",
+                    "next_run": (
+                        datetime.utcnow() + timedelta(days=1)
+                    ).isoformat(),  # Tạm thời mock thời gian lần tới
+                }
+            )
 
         return {
             "system": {
@@ -151,34 +192,128 @@ def get_admin_stats():
                 "geocoding_rate": geocoding_rate,
                 "pending_review": pending_review,
                 "running_tasks": running_tasks,
-                "total_tasks": total_tasks
+                "total_tasks": total_tasks,
             },
-            "scheduled_jobs": scheduled_list
+            "scheduled_jobs": scheduled_list,
         }
     finally:
         session.close()
 
+
 # --- API Admin: Bot Config ---
 BOT_CONFIG_PATH = os.path.join(os.path.dirname(__file__), "data", "bot_config.json")
+BOT_CONFIG_DEFAULT = {
+    "facebook": {
+        "enabled": True,
+        "max_posts_per_group": 5,
+        "max_groups_per_session": 3,
+        "max_days_old": 3,
+        "facebook_groups": [],
+        "moderation_policy": {
+            "mode": "manual",
+            "learn_from_admin": True,
+        },
+    },
+    "topcv": {
+        "enabled": True,
+        "max_pages": 2,
+        "headless": True,
+    },
+    "itviec": {
+        "enabled": True,
+        "max_pages": 1,
+        "headless": True,
+    },
+    "vietnamworks": {
+        "enabled": True,
+        "max_pages": 2,
+        "headless": True,
+    },
+}
+
+
+def _merge_bot_config(raw_config: Optional[dict]) -> dict:
+    merged = json.loads(json.dumps(BOT_CONFIG_DEFAULT))
+    if not isinstance(raw_config, dict):
+        return merged
+
+    # Backward compatibility: treat old flat config as Facebook config.
+    if any(
+        key in raw_config
+        for key in (
+            "max_posts_per_group",
+            "max_groups_per_session",
+            "max_days_old",
+            "facebook_groups",
+            "moderation_policy",
+        )
+    ):
+        raw_config = {
+            **raw_config,
+            "facebook": {
+                **raw_config.get("facebook", {}),
+                "max_posts_per_group": raw_config.get(
+                    "max_posts_per_group", merged["facebook"]["max_posts_per_group"]
+                ),
+                "max_groups_per_session": raw_config.get(
+                    "max_groups_per_session",
+                    merged["facebook"]["max_groups_per_session"],
+                ),
+                "max_days_old": raw_config.get(
+                    "max_days_old", merged["facebook"]["max_days_old"]
+                ),
+                "facebook_groups": raw_config.get(
+                    "facebook_groups", merged["facebook"]["facebook_groups"]
+                ),
+                "moderation_policy": raw_config.get(
+                    "moderation_policy", merged["facebook"]["moderation_policy"]
+                ),
+            },
+        }
+
+    def merge_section(section_name: str):
+        section_defaults = merged[section_name]
+        raw_section = raw_config.get(section_name)
+        if not isinstance(raw_section, dict):
+            return
+
+        for key, value in raw_section.items():
+            if (
+                section_name == "facebook"
+                and key == "moderation_policy"
+                and isinstance(value, dict)
+            ):
+                merged_policy = section_defaults["moderation_policy"]
+                mode = str(value.get("mode", merged_policy["mode"])).lower()
+                merged_policy["mode"] = mode if mode in {"auto", "manual"} else "manual"
+                merged_policy["learn_from_admin"] = bool(
+                    value.get("learn_from_admin", merged_policy["learn_from_admin"])
+                )
+                continue
+            section_defaults[key] = value
+
+    for source_name in merged.keys():
+        merge_section(source_name)
+
+    return merged
+
 
 @app.get("/api/admin/bot-config")
 def get_bot_config():
     if not os.path.exists(BOT_CONFIG_PATH):
-        return {
-            "max_posts_per_group": 5,
-            "max_groups_per_session": 3,
-            "max_days_old": 3,
-            "facebook_groups": []
-        }
+        return _merge_bot_config({})
     with open(BOT_CONFIG_PATH, "r", encoding="utf-8") as f:
-        return json.load(f)
+        return _merge_bot_config(json.load(f))
+
 
 @app.post("/api/admin/bot-config")
 def update_bot_config(config: dict = Body(...)):
     os.makedirs(os.path.dirname(BOT_CONFIG_PATH), exist_ok=True)
+    merged_config = _merge_bot_config(config)
     with open(BOT_CONFIG_PATH, "w", encoding="utf-8") as f:
-        json.dump(config, f, ensure_ascii=False, indent=2)
+        json.dump(merged_config, f, ensure_ascii=False, indent=2)
     return {"message": "Cập nhật cấu hình thành công"}
+
 
 # --- API Admin: Quản Lý Scraping Tasks ---
 class TaskCreate(BaseModel):
@@ -189,6 +324,7 @@ class TaskCreate(BaseModel):
     is_scheduled: bool = False
     schedule_cron: Optional[str] = None
 
+
 @app.get("/api/admin/tasks")
 def list_tasks():
     session = models.get_session()
@@ -197,6 +333,7 @@ def list_tasks():
         return [t.to_dict() for t in tasks]
     finally:
         session.close()
+
 
 @app.post("/api/admin/tasks")
 def create_task(task_in: TaskCreate):
@@ -209,7 +346,7 @@ def create_task(task_in: TaskCreate):
             max_pages=task_in.max_pages,
             is_scheduled=task_in.is_scheduled,
             schedule_cron=task_in.schedule_cron,
-            status="idle"
+            status="idle",
         )
         session.add(t)
         session.commit()
@@ -218,6 +355,7 @@ def create_task(task_in: TaskCreate):
     finally:
         session.close()
 
+
 @app.post("/api/admin/tasks/{task_id}/run")
 def run_task(task_id: int):
     session = models.get_session()
@@ -225,7 +363,7 @@ def run_task(task_id: int):
         task = session.query(ScrapeTask).filter(ScrapeTask.id == task_id).first()
         if not task:
             raise HTTPException(status_code=404, detail="Task không tồn tại")
-        
+
         task.status = "running"
         task.last_run_at = datetime.utcnow()
         session.commit()
@@ -236,8 +374,10 @@ def run_task(task_id: int):
             args = [sys.executable, "main.py", "now"]
             if task.source_name:
                 args.append(task.source_name)
-            subprocess.Popen(args, close_fds=True if os.name != 'nt' else False)
-            logger.info(f"🚀 Triggered Crawler Pipeline for Task #{task_id} ({task.source_name or 'all'}) in background.")
+            subprocess.Popen(args, close_fds=True if os.name != "nt" else False)
+            logger.info(
+                f"🚀 Triggered Crawler Pipeline for Task #{task_id} ({task.source_name or 'all'}) in background."
+            )
         except Exception as e:
             logger.error(f"Error launching background crawl subprocess: {e}")
 
@@ -245,23 +385,30 @@ def run_task(task_id: int):
     finally:
         session.close()
 
+
 @app.post("/api/admin/tasks/by-source/{source_name}/run")
 def run_task_by_source(source_name: str):
     session = models.get_session()
     try:
-        task = session.query(ScrapeTask).filter(ScrapeTask.source_name == source_name).first()
+        task = (
+            session.query(ScrapeTask)
+            .filter(ScrapeTask.source_name == source_name)
+            .first()
+        )
         if not task:
             # Tạo task mặc định nếu chưa tồn tại
             task = ScrapeTask(
                 name=f"{source_name.capitalize()} Crawler",
                 source_name=source_name,
-                seed_url=f"https://www.{source_name}.com" if source_name != "facebook" else "https://www.facebook.com",
-                status="idle"
+                seed_url=f"https://www.{source_name}.com"
+                if source_name != "facebook"
+                else "https://www.facebook.com",
+                status="idle",
             )
             session.add(task)
             session.commit()
             session.refresh(task)
-        
+
         task.status = "running"
         task.last_run_at = datetime.utcnow()
         session.commit()
@@ -269,8 +416,10 @@ def run_task_by_source(source_name: str):
         try:
             args = [sys.executable, "main.py", "now"]
             args.append(source_name)
-            subprocess.Popen(args, close_fds=True if os.name != 'nt' else False)
-            logger.info(f"🚀 Triggered Crawler Pipeline for {source_name} in background.")
+            subprocess.Popen(args, close_fds=True if os.name != "nt" else False)
+            logger.info(
+                f"🚀 Triggered Crawler Pipeline for {source_name} in background."
+            )
         except Exception as e:
             logger.error(f"Error launching background crawl subprocess: {e}")
 
@@ -278,34 +427,43 @@ def run_task_by_source(source_name: str):
     finally:
         session.close()
 
+
 # --- API Admin: Cập nhật Lịch Trình Tự Động ---
 class ScheduleUpdate(BaseModel):
     is_scheduled: bool
     schedule_cron: str
 
+
 @app.post("/api/admin/tasks/by-source/{source_name}/schedule")
 def update_task_schedule_by_source(source_name: str, data: ScheduleUpdate):
     session = models.get_session()
     try:
-        task = session.query(ScrapeTask).filter(ScrapeTask.source_name == source_name).first()
+        task = (
+            session.query(ScrapeTask)
+            .filter(ScrapeTask.source_name == source_name)
+            .first()
+        )
         if not task:
             # Tạo task mặc định nếu chưa tồn tại
             task = ScrapeTask(
                 name=f"{source_name.capitalize()} Crawler",
                 source_name=source_name,
-                seed_url=f"https://www.{source_name}.com" if source_name != "facebook" else "https://www.facebook.com",
-                status="idle"
+                seed_url=f"https://www.{source_name}.com"
+                if source_name != "facebook"
+                else "https://www.facebook.com",
+                status="idle",
             )
             session.add(task)
             session.commit()
             session.refresh(task)
-        
+
         task.is_scheduled = data.is_scheduled
         task.schedule_cron = data.schedule_cron
         session.commit()
         return {"message": "Cập nhật lịch chạy thành công", "task": task.to_dict()}
     finally:
         session.close()
+
 
 @app.post("/api/admin/tasks/{task_id}/schedule")
 def update_task_schedule(task_id: int, data: ScheduleUpdate):
@@ -314,13 +472,14 @@ def update_task_schedule(task_id: int, data: ScheduleUpdate):
         task = session.query(ScrapeTask).filter(ScrapeTask.id == task_id).first()
         if not task:
             raise HTTPException(status_code=404, detail="Task không tồn tại")
-        
+
         task.is_scheduled = data.is_scheduled
         task.schedule_cron = data.schedule_cron
         session.commit()
         return {"message": "Cập nhật lịch chạy thành công", "task": task.to_dict()}
     finally:
         session.close()
+
 
 @app.post("/api/admin/tasks/{task_id}/cancel")
 def cancel_task(task_id: int):
@@ -335,6 +494,7 @@ def cancel_task(task_id: int):
     finally:
         session.close()
 
+
 @app.delete("/api/admin/tasks/{task_id}")
 def delete_task(task_id: int):
     session = models.get_session()
@@ -348,26 +508,42 @@ def delete_task(task_id: int):
     finally:
         session.close()
 
+
 # --- API Admin: Kiểm Duyệt Việc Làm (Review / Active Learning) ---
 @app.get("/api/admin/jobs/review")
 def get_review_jobs(limit: int = 50):
     session = models.get_session()
     try:
-        jobs = session.query(Job).filter(Job.status == "pending").order_by(Job.scraped_at.desc()).limit(limit).all()
+        jobs = (
+            session.query(Job)
+            .filter(Job.status == "pending")
+            .order_by(Job.scraped_at.desc())
+            .limit(limit)
+            .all()
+        )
         return {"jobs": [j.to_dict() for j in jobs]}
     finally:
         session.close()
+
 
 class ReviewAction(BaseModel):
     action: str  # 'approve' hoặc 'reject'
     # Các trường mở rộng hỗ trợ Chỉnh Sửa để Bot Tự Học
     title: Optional[str] = None
+    title_corrected: Optional[str] = None
     company: Optional[str] = None
+    company_corrected: Optional[str] = None
     salary_raw: Optional[str] = None
+    salary_raw_corrected: Optional[str] = None
     salary_min: Optional[float] = None
+    salary_min_corrected: Optional[float] = None
     salary_max: Optional[float] = None
+    salary_max_corrected: Optional[float] = None
     address_clean: Optional[str] = None
-    skills: Optional[List[str]] = None
+    location_corrected: Optional[str] = None
+    skills: Optional[Any] = None
+    skills_corrected: Optional[Any] = None
+
 
 @app.post("/api/admin/jobs/{job_id}/review")
 def review_job(job_id: int, data: ReviewAction):
@@ -379,6 +555,7 @@ def review_job(job_id: int, data: ReviewAction):
 
         if data.action == "reject":
             job.status = "rejected"
+            job.needs_review = False
             session.commit()
             return {"message": "Job rejected"}
 
@@ -386,15 +563,56 @@ def review_job(job_id: int, data: ReviewAction):
         # So sánh các giá trị Admin chỉnh sửa với giá trị gốc bot cào về
         corrections = []
 
+        def pick_value(*values):
+            for value in values:
+                if value is None:
+                    continue
+                if isinstance(value, str) and not value.strip():
+                    continue
+                return value
+            return None
+
+        def normalize_text(value):
+            if value is None:
+                return None
+            text = str(value).strip()
+            return text or None
+
+        def coerce_skills(value):
+            if value is None:
+                return None
+            if isinstance(value, list):
+                cleaned = [normalize_text(item) for item in value]
+                return [item for item in cleaned if item]
+            if isinstance(value, str):
+                parts = [
+                    segment.strip()
+                    for segment in re.split(r"[,;\n]", value)
+                    if segment.strip()
+                ]
+                return parts or None
+            text = normalize_text(value)
+            return [text] if text else None
+
         def track_change(field: str, old_val, new_val):
-            if new_val is not None and str(old_val).strip() != str(new_val).strip():
+            if new_val is None:
+                return False
+
+            if isinstance(new_val, list):
+                new_norm = json.dumps(new_val, ensure_ascii=False, sort_keys=True)
+                old_norm = json.dumps(old_val or [], ensure_ascii=False, sort_keys=True)
+            else:
+                new_norm = str(new_val).strip()
+                old_norm = str(old_val).strip() if old_val is not None else ""
+
+            if new_norm != old_norm:
                 # Lưu log lịch sử chỉnh sửa
                 log = JobCorrection(
                     job_id=job.id,
                     field_name=field,
                     old_value=str(old_val) if old_val is not None else "",
                     new_value=str(new_val),
-                    corrected_at=datetime.utcnow()
+                    corrected_at=datetime.utcnow(),
                 )
                 session.add(log)
                 corrections.append(field)
@@ -402,61 +620,86 @@ def review_job(job_id: int, data: ReviewAction):
             return False
 
         # Thực hiện so sánh & cập nhật các trường được chỉnh sửa từ Admin UI
-        if data.title:
-            track_change("title", job.title, data.title)
-            job.title = data.title
-        
-        if data.company:
-            track_change("company", job.company, data.company)
-            job.company = data.company
+        title_value = normalize_text(pick_value(data.title_corrected, data.title))
+        if title_value is not None:
+            track_change("title", job.title, title_value)
+            job.title = title_value
 
-            # ── BỘ NHỚ THỰC THỂ ĐỘNG (Dynamic Entity Cache) ──
-            # Nếu admin sửa tên công ty và bài đăng có Số điện thoại hoặc Địa chỉ sạch:
-            # Ghi nhận SĐT/Địa chỉ này thuộc về Công ty chuẩn vừa được cập nhật
-            if job.phone:
-                # Kiểm tra xem thực thể SĐT này đã lưu chưa
-                existing = session.query(VerifiedEntity).filter(
+        company_value = normalize_text(pick_value(data.company_corrected, data.company))
+        if company_value is not None:
+            track_change("company", job.company, company_value)
+            job.company = company_value
+
+        if company_value and getattr(job, "phone", None):
+            existing_phone = (
+                session.query(VerifiedEntity)
+                .filter(
                     VerifiedEntity.entity_type == "phone",
-                    VerifiedEntity.entity_value == job.phone
-                ).first()
-                if not existing:
-                    entity = VerifiedEntity(
-                        entity_type="phone",
-                        entity_value=job.phone,
-                        mapped_company=data.company
-                    )
-                    session.add(entity)
-                    logger.info(f"🧠 [Auto-Learning] Saved Phone {job.phone} -> Company '{data.company}'")
-            
-            if job.address_clean:
-                existing_addr = session.query(VerifiedEntity).filter(
-                    VerifiedEntity.entity_type == "address",
-                    VerifiedEntity.entity_value == job.address_clean
-                ).first()
-                if not existing_addr:
-                    entity = VerifiedEntity(
-                        entity_type="address",
-                        entity_value=job.address_clean,
-                        mapped_company=data.company
-                    )
-                    session.add(entity)
-                    logger.info(f"🧠 [Auto-Learning] Saved Address {job.address_clean} -> Company '{data.company}'")
+                    VerifiedEntity.entity_value == job.phone,
+                )
+                .first()
+            )
+            if not existing_phone:
+                phone_entity = VerifiedEntity(
+                    entity_type="phone",
+                    entity_value=job.phone,
+                    mapped_company=company_value,
+                )
+                session.add(phone_entity)
+                logger.info(
+                    f"🧠 [Auto-Learning] Saved Phone {job.phone} -> Company '{company_value}'"
+                )
 
-        if data.salary_raw:
-            track_change("salary_raw", job.salary_raw, data.salary_raw)
-            job.salary_raw = data.salary_raw
-        if data.salary_min is not None:
-            track_change("salary_min", job.salary_min, data.salary_min)
-            job.salary_min = data.salary_min
-        if data.salary_max is not None:
-            track_change("salary_max", job.salary_max, data.salary_max)
-            job.salary_max = data.salary_max
-        if data.address_clean:
-            track_change("address_clean", job.address_clean, data.address_clean)
-            job.address_clean = data.address_clean
-        if data.skills is not None:
-            track_change("skills", job.skills, data.skills)
-            job.skills = data.skills
+        salary_raw_value = normalize_text(
+            pick_value(data.salary_raw_corrected, data.salary_raw)
+        )
+        if salary_raw_value is not None:
+            track_change("salary_raw", job.salary_raw, salary_raw_value)
+            job.salary_raw = salary_raw_value
+
+        salary_min_value = pick_value(data.salary_min_corrected, data.salary_min)
+        if salary_min_value is not None:
+            track_change("salary_min", job.salary_min, salary_min_value)
+            job.salary_min = salary_min_value
+
+        salary_max_value = pick_value(data.salary_max_corrected, data.salary_max)
+        if salary_max_value is not None:
+            track_change("salary_max", job.salary_max, salary_max_value)
+            job.salary_max = salary_max_value
+
+        address_value = normalize_text(
+            pick_value(data.location_corrected, data.address_clean)
+        )
+        if address_value is not None:
+            track_change("address_clean", job.address_clean, address_value)
+            job.address_clean = address_value
+
+        skills_value = coerce_skills(pick_value(data.skills_corrected, data.skills))
+        if skills_value is not None:
+            track_change("skills", job.skills, skills_value)
+            job.skills = skills_value
+
+        # ── BỘ NHỚ THỰC THỂ ĐỘNG (Dynamic Entity Cache) ──
+        # Khi admin sửa company và có address chuẩn hóa, lưu lại cặp đã xác thực.
+        if company_value and address_value:
+            existing_addr = (
+                session.query(VerifiedEntity)
+                .filter(
+                    VerifiedEntity.entity_type == "address",
+                    VerifiedEntity.entity_value == address_value,
+                )
+                .first()
+            )
+            if not existing_addr:
+                entity = VerifiedEntity(
+                    entity_type="address",
+                    entity_value=address_value,
+                    mapped_company=company_value,
+                )
+                session.add(entity)
+                logger.info(
+                    f"🧠 [Auto-Learning] Saved Address {address_value} -> Company '{company_value}'"
+                )
 
         job.status = "approved"
         job.needs_review = False
@@ -465,10 +708,11 @@ def review_job(job_id: int, data: ReviewAction):
         return {
             "message": "Job approved",
             "corrections_made": corrections,
-            "learned_entities": len(corrections) > 0
+            "learned_entities": len(corrections) > 0,
         }
     finally:
         session.close()
+
 
 # --- API Admin: Phân Tích Xu Hướng Tuyển Dụng (Analytics) ---
 @app.get("/api/admin/analytics")
@@ -494,7 +738,12 @@ def get_analytics():
                 except:
                     pass
 
-        top_skills = [{"skill": k.upper(), "count": v} for k, v in sorted(skill_counts.items(), key=lambda x: x[1], reverse=True)[:10]]
+        top_skills = [
+            {"skill": k.upper(), "count": v}
+            for k, v in sorted(skill_counts.items(), key=lambda x: x[1], reverse=True)[
+                :10
+            ]
+        ]
 
         # 2. Phân bố Nguồn cào (Source distribution)
         sources = {}
@@ -507,7 +756,7 @@ def get_analytics():
             "0-2 km": int(len(jobs) * 0.35),
             "2-5 km": int(len(jobs) * 0.45),
             "5-10 km": int(len(jobs) * 0.15),
-            ">10 km": int(len(jobs) * 0.05)
+            ">10 km": int(len(jobs) * 0.05),
         }
 
         # 4. Thống kê Mức Lương
@@ -515,20 +764,23 @@ def get_analytics():
         salary_maxs = [j.salary_max for j in jobs if j.salary_max is not None]
 
         salary_stats = {
-            "avg_min": round(sum(salary_mins) / len(salary_mins) * 1000000, 0) if salary_mins else 0,
+            "avg_min": round(sum(salary_mins) / len(salary_mins) * 1000000, 0)
+            if salary_mins
+            else 0,
             "min": round(min(salary_mins) * 1000000, 0) if salary_mins else 0,
             "max": round(max(salary_maxs) * 1000000, 0) if salary_maxs else 0,
-            "count": len(salary_mins)
+            "count": len(salary_mins),
         }
 
         return {
             "top_skills": top_skills,
             "source_distribution": sources,
             "radius_distribution": radius,
-            "salary_stats": salary_stats
+            "salary_stats": salary_stats,
         }
     finally:
         session.close()
+
 
 # --- API Admin & Public: Knowledge Graph ---
 @app.get("/api/knowledge-graph")
@@ -540,11 +792,13 @@ def get_knowledge_graph():
 
         nodes_list = []
         for n in nodes:
-            nodes_list.append({
-                "id": n.name.lower(),
-                "label": n.name,
-                "group": n.category or "unknown"
-            })
+            nodes_list.append(
+                {
+                    "id": n.name.lower(),
+                    "label": n.name,
+                    "group": n.category or "unknown",
+                }
+            )
 
         # Fallback dữ liệu tĩnh nếu DB trống để UI Knowledge Graph luôn sinh động
         if not nodes_list:
@@ -554,65 +808,110 @@ def get_knowledge_graph():
                 {"id": "react", "label": "React", "group": "web_frontend"},
                 {"id": "postgresql", "label": "PostgreSQL", "group": "database"},
                 {"id": "docker", "label": "Docker", "group": "devops"},
-                {"id": "machine learning", "label": "Machine Learning", "group": "data_science"},
+                {
+                    "id": "machine learning",
+                    "label": "Machine Learning",
+                    "group": "data_science",
+                },
             ]
 
         edges_list = []
         for r in relations:
-            edges_list.append({
-                "from": r.skill_from.lower(),
-                "to": r.skill_to.lower(),
-                "weight": r.weight or 1.0,
-                "relation": r.relation_type or "related"
-            })
+            edges_list.append(
+                {
+                    "from": r.skill_from.lower(),
+                    "to": r.skill_to.lower(),
+                    "weight": r.weight or 1.0,
+                    "relation": r.relation_type or "related",
+                }
+            )
 
         if not edges_list:
             edges_list = [
-                {"from": "python", "to": "fastapi", "weight": 2.0, "relation": "requires"},
-                {"from": "fastapi", "to": "react", "weight": 1.0, "relation": "related"},
-                {"from": "fastapi", "to": "postgresql", "weight": 1.5, "relation": "requires"},
-                {"from": "python", "to": "machine learning", "weight": 2.5, "relation": "related"},
-                {"from": "postgresql", "to": "docker", "weight": 1.0, "relation": "related"}
+                {
+                    "from": "python",
+                    "to": "fastapi",
+                    "weight": 2.0,
+                    "relation": "requires",
+                },
+                {
+                    "from": "fastapi",
+                    "to": "react",
+                    "weight": 1.0,
+                    "relation": "related",
+                },
+                {
+                    "from": "fastapi",
+                    "to": "postgresql",
+                    "weight": 1.5,
+                    "relation": "requires",
+                },
+                {
+                    "from": "python",
+                    "to": "machine learning",
+                    "weight": 2.5,
+                    "relation": "related",
+                },
+                {
+                    "from": "postgresql",
+                    "to": "docker",
+                    "weight": 1.0,
+                    "relation": "related",
+                },
             ]
 
-        return {
-            "nodes": nodes_list,
-            "edges": edges_list
-        }
+        return {"nodes": nodes_list, "edges": edges_list}
     finally:
         session.close()
+
 
 @app.get("/api/skills/{skill}/related")
 def get_related_skills(skill: str, max_hops: int = 2):
     session = models.get_session()
     try:
-        relations = session.query(SkillRelation).filter(
-            (SkillRelation.skill_from.like(f"%{skill}%")) | (SkillRelation.skill_to.like(f"%{skill}%"))
-        ).limit(20).all()
+        relations = (
+            session.query(SkillRelation)
+            .filter(
+                (SkillRelation.skill_from.like(f"%{skill}%"))
+                | (SkillRelation.skill_to.like(f"%{skill}%"))
+            )
+            .limit(20)
+            .all()
+        )
 
         results = []
         for r in relations:
-            target = r.skill_to if r.skill_from.lower() == skill.lower() else r.skill_from
-            results.append({
-                "skill": target,
-                "relation": r.relation_type or "related",
-                "weight": r.weight
-            })
+            target = (
+                r.skill_to if r.skill_from.lower() == skill.lower() else r.skill_from
+            )
+            results.append(
+                {
+                    "skill": target,
+                    "relation": r.relation_type or "related",
+                    "weight": r.weight,
+                }
+            )
 
         if not results:
             # Dữ liệu mẫu fallback
             results = [
                 {"skill": "FastAPI", "relation": "requires", "weight": 2.0},
                 {"skill": "Django", "relation": "related", "weight": 1.5},
-                {"skill": "Pandas", "relation": "related", "weight": 2.5}
+                {"skill": "Pandas", "relation": "related", "weight": 2.5},
             ]
         return {"related": results}
     finally:
         session.close()
 
+
 # --- API Public: Tìm kiếm Việc Làm & Bản Đồ (Map & Search) ---
 @app.get("/api/jobs/map/data")
-def get_map_jobs(radius_km: float = 10.0, user_lat: Optional[float] = None, user_lng: Optional[float] = None, source: Optional[str] = None):
+def get_map_jobs(
+    radius_km: float = 10.0,
+    user_lat: Optional[float] = None,
+    user_lng: Optional[float] = None,
+    source: Optional[str] = None,
+):
     session = models.get_session()
     try:
         query = session.query(Job).filter(Job.status == "approved")
@@ -632,23 +931,25 @@ def get_map_jobs(radius_km: float = 10.0, user_lat: Optional[float] = None, user
                     if user_lat is not None and user_lng is not None:
                         dx = (lng - user_lng) * 111.0 * 0.96
                         dy = (lat - user_lat) * 111.0
-                        distance = round((dx**2 + dy**2)**0.5, 2)
+                        distance = round((dx**2 + dy**2) ** 0.5, 2)
                         if distance > radius_km:
                             continue
 
-                    markers.append({
-                        "id": j.id,
-                        "title": j.title,
-                        "company": j.company or "N/A",
-                        "address": loc.address_text or "Đà Nẵng",
-                        "salary": j.salary_raw or "Thỏa thuận",
-                        "lat": lat,
-                        "lng": lng,
-                        "url": j.source_url,
-                        "source": j.source_name,
-                        "skills": j.skills or [],
-                        "distance_km": distance if user_lat is not None else None
-                    })
+                    markers.append(
+                        {
+                            "id": j.id,
+                            "title": j.title,
+                            "company": j.company or "N/A",
+                            "address": loc.address_text or "Đà Nẵng",
+                            "salary": j.salary_raw or "Thỏa thuận",
+                            "lat": lat,
+                            "lng": lng,
+                            "url": j.source_url,
+                            "source": j.source_name,
+                            "skills": j.skills or [],
+                            "distance_km": distance if user_lat is not None else None,
+                        }
+                    )
             else:
                 lat = j.latitude if j.latitude is not None else 16.0544
                 lng = j.longitude if j.longitude is not None else 108.2022
@@ -657,27 +958,30 @@ def get_map_jobs(radius_km: float = 10.0, user_lat: Optional[float] = None, user
                 if user_lat is not None and user_lng is not None:
                     dx = (lng - user_lng) * 111.0 * 0.96
                     dy = (lat - user_lat) * 111.0
-                    distance = round((dx**2 + dy**2)**0.5, 2)
+                    distance = round((dx**2 + dy**2) ** 0.5, 2)
                     if distance > radius_km:
                         continue
 
-                markers.append({
-                    "id": j.id,
-                    "title": j.title,
-                    "company": j.company or "N/A",
-                    "address": j.address_clean or j.address_raw or "Đà Nẵng",
-                    "salary": j.salary_raw or "Thỏa thuận",
-                    "lat": lat,
-                    "lng": lng,
-                    "url": j.source_url,
-                    "source": j.source_name,
-                    "skills": j.skills or [],
-                    "distance_km": distance if user_lat is not None else None
-                })
+                markers.append(
+                    {
+                        "id": j.id,
+                        "title": j.title,
+                        "company": j.company or "N/A",
+                        "address": j.address_clean or j.address_raw or "Đà Nẵng",
+                        "salary": j.salary_raw or "Thỏa thuận",
+                        "lat": lat,
+                        "lng": lng,
+                        "url": j.source_url,
+                        "source": j.source_name,
+                        "skills": j.skills or [],
+                        "distance_km": distance if user_lat is not None else None,
+                    }
+                )
 
         return {"markers": markers}
     finally:
         session.close()
+
 
 class JobSearchQuery(BaseModel):
     query: Optional[str] = None
@@ -690,6 +994,7 @@ class JobSearchQuery(BaseModel):
     limit: int = 20
     offset: int = 0
 
+
 @app.post("/api/jobs/search")
 def search_jobs(q: JobSearchQuery):
     session = models.get_session()
@@ -697,10 +1002,16 @@ def search_jobs(q: JobSearchQuery):
         query = session.query(Job).filter(Job.status == "approved")
 
         if q.query:
-            query = query.filter((Job.title.like(f"%{q.query}%")) | (Job.description.like(f"%{q.query}%")))
-        
+            query = query.filter(
+                (Job.title.like(f"%{q.query}%"))
+                | (Job.description.like(f"%{q.query}%"))
+            )
+
         if q.salary_min:
-            query = query.filter((Job.salary_min >= q.salary_min / 1000000.0) | (Job.salary_min.is_(None)))
+            query = query.filter(
+                (Job.salary_min >= q.salary_min / 1000000.0)
+                | (Job.salary_min.is_(None))
+            )
 
         jobs = query.all()
         results = []
@@ -713,31 +1024,36 @@ def search_jobs(q: JobSearchQuery):
             if q.user_lat is not None and q.user_lng is not None:
                 dx = (lng - q.user_lng) * 111.0 * 0.96
                 dy = (lat - q.user_lat) * 111.0
-                distance = round((dx**2 + dy**2)**0.5, 2)
+                distance = round((dx**2 + dy**2) ** 0.5, 2)
                 if q.radius_km and distance > q.radius_km:
                     continue
 
-            results.append({
-                "id": j.id,
-                "title": j.title,
-                "company": j.company or "N/A",
-                "address_clean": j.address_clean,
-                "address_raw": j.address_raw,
-                "salary_raw": j.salary_raw,
-                "source_name": j.source_name,
-                "source_url": j.source_url,
-                "skills": j.skills or [],
-                "distance_km": distance,
-                "locations": [
-                    {
-                        "id": loc.id,
-                        "address_text": loc.address_text,
-                        "latitude": loc.latitude,
-                        "longitude": loc.longitude,
-                        "geocoding_confidence": loc.geocoding_confidence
-                    } for loc in j.locations
-                ] if j.locations else []
-            })
+            results.append(
+                {
+                    "id": j.id,
+                    "title": j.title,
+                    "company": j.company or "N/A",
+                    "address_clean": j.address_clean,
+                    "address_raw": j.address_raw,
+                    "salary_raw": j.salary_raw,
+                    "source_name": j.source_name,
+                    "source_url": j.source_url,
+                    "skills": j.skills or [],
+                    "distance_km": distance,
+                    "locations": [
+                        {
+                            "id": loc.id,
+                            "address_text": loc.address_text,
+                            "latitude": loc.latitude,
+                            "longitude": loc.longitude,
+                            "geocoding_confidence": loc.geocoding_confidence,
+                        }
+                        for loc in j.locations
+                    ]
+                    if j.locations
+                    else [],
+                }
+            )
 
         # Sắp xếp theo khoảng cách nếu có vị trí
         if q.user_lat is not None:
@@ -746,12 +1062,10 @@ def search_jobs(q: JobSearchQuery):
         total = len(results)
         paginated_results = results[q.offset : q.offset + q.limit]
 
-        return {
-            "total": total,
-            "results": paginated_results
-        }
+        return {"total": total, "results": paginated_results}
     finally:
         session.close()
+
 
 @app.get("/api/jobs/{job_id}")
 def get_job_detail(job_id: int):
@@ -760,22 +1074,31 @@ def get_job_detail(job_id: int):
         j = session.query(Job).filter(Job.id == job_id).first()
         if not j:
             raise HTTPException(status_code=404, detail="Job không tồn tại")
-        
+
         res = j.to_dict()
         res["description"] = j.description
         res["requirements"] = j.requirements
         res["address_raw"] = j.address_raw
-        
+
         # Gợi ý kỹ năng liên quan
         related = []
         if j.skills:
             for s in j.skills:
                 # Quét SkillRelation tìm các kỹ năng liên đới
-                relations = session.query(SkillRelation).filter(
-                    (SkillRelation.skill_from == s) | (SkillRelation.skill_to == s)
-                ).limit(3).all()
+                relations = (
+                    session.query(SkillRelation)
+                    .filter(
+                        (SkillRelation.skill_from == s) | (SkillRelation.skill_to == s)
+                    )
+                    .limit(3)
+                    .all()
+                )
                 for r in relations:
-                    target = r.skill_to if r.skill_from.lower() == s.lower() else r.skill_from
+                    target = (
+                        r.skill_to
+                        if r.skill_from.lower() == s.lower()
+                        else r.skill_from
+                    )
                     if target not in related and target.lower() != s.lower():
                         related.append(target)
         res["related_skills"] = related[:5]
@@ -783,25 +1106,26 @@ def get_job_detail(job_id: int):
     finally:
         session.close()
 
+
 # --- API: Ghi nhận Tương tác Người Dùng (Interactions) ---
 class InteractionIn(BaseModel):
     job_id: int
     action: str
+
 
 @app.post("/api/interactions")
 def log_interaction(inter: InteractionIn):
     session = models.get_session()
     try:
         log = UserInteraction(
-            job_id=inter.job_id,
-            action=inter.action,
-            created_at=datetime.utcnow()
+            job_id=inter.job_id, action=inter.action, created_at=datetime.utcnow()
         )
         session.add(log)
         session.commit()
         return {"status": "success"}
     finally:
         session.close()
+
 
 # --- WebSocket: Giám Sát Agent Real-time (/ws/monitor) ---
 @app.websocket("/ws/monitor")
@@ -812,21 +1136,29 @@ async def websocket_endpoint(websocket: WebSocket):
         session = models.get_session()
         try:
             total = session.query(Job).count()
-            geocoded = session.query(Job).filter((Job.is_geocoded == True) | (Job.latitude.isnot(None))).count()
+            geocoded = (
+                session.query(Job)
+                .filter((Job.is_geocoded == True) | (Job.latitude.isnot(None)))
+                .count()
+            )
             rate = int(geocoded / total * 100) if total > 0 else 0
-            
-            await websocket.send_json({
-                "type": "stats_update",
-                "data": {
-                    "active_threads": session.query(ScrapeTask).filter(ScrapeTask.status == "running").count(),
-                    "geocoding_rate": rate,
-                    "total_errors": 0,
-                    "scrape_speed": 45, # Mock speed
-                    "total_jobs": total,
-                    "geocoded_jobs": geocoded,
-                    "last_run_at": datetime.utcnow().isoformat()
+
+            await websocket.send_json(
+                {
+                    "type": "stats_update",
+                    "data": {
+                        "active_threads": session.query(ScrapeTask)
+                        .filter(ScrapeTask.status == "running")
+                        .count(),
+                        "geocoding_rate": rate,
+                        "total_errors": 0,
+                        "scrape_speed": 45,  # Mock speed
+                        "total_jobs": total,
+                        "geocoded_jobs": geocoded,
+                        "last_run_at": datetime.utcnow().isoformat(),
+                    },
                 }
-            })
+            )
         finally:
             session.close()
 
@@ -834,21 +1166,26 @@ async def websocket_endpoint(websocket: WebSocket):
             # Nhận thông điệp từ client (nếu có) để giữ kết nối sống
             data = await websocket.receive_text()
             # Trả lời lại dạng heartbeat
-            await websocket.send_json({"type": "heartbeat", "time": datetime.utcnow().isoformat()})
+            await websocket.send_json(
+                {"type": "heartbeat", "time": datetime.utcnow().isoformat()}
+            )
     except WebSocketDisconnect:
         manager.disconnect(websocket)
     except Exception as e:
         logger.error(f"WebSocket error: {e}")
         manager.disconnect(websocket)
 
+
 # --- Điều Hướng Giao Diện (Redirects) ---
 @app.get("/")
 def redirect_to_public():
     return RedirectResponse(url="/static/index.html")
 
+
 @app.get("/admin")
 def redirect_to_admin():
     return RedirectResponse(url="/static/admin.html")
+
 
 # --- Phục vụ Website Tĩnh (Static Files) ---
 # Thư mục /static sẽ ánh xạ trực tiếp đến các file static/index.html, static/admin.html,...
@@ -857,7 +1194,12 @@ app.mount("/static", StaticFiles(directory="static"), name="static")
 # --- Khởi Chạy Server ---
 if __name__ == "__main__":
     import uvicorn
+
     # Đọc cấu hình từ config.py
-    logger.info(f"🚀 Starting JobAgent FastAPI Web Server at http://{config.APP_HOST}:{config.APP_PORT}")
+    logger.info(
+        f"🚀 Starting JobAgent FastAPI Web Server at http://{config.APP_HOST}:{config.APP_PORT}"
+    )
     logger.info(f"🔐 Admin Username: {config.ADMIN_USERNAME}")
-    uvicorn.run("server:app", host=config.APP_HOST, port=config.APP_PORT, reload=config.DEBUG)
+    uvicorn.run(
+        "server:app", host=config.APP_HOST, port=config.APP_PORT, reload=config.DEBUG
+    )

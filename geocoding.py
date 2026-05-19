@@ -100,8 +100,8 @@ class GeocodingProcessor:
         address = re.sub(r'(?i)\b(?:tầng|lầu|floor|room|phòng|p\.?)\s*\d+\b\s*(?:-\s*|\,\s*)?', '', address)
         address = re.sub(r'(?i)\b\d+\s*(?:st|nd|rd|th)\s*floor\s*(?:-\s*|\,\s*)?', '', address)
         
-        # Loại bỏ các cụm "Tòa nhà X", "Building Y", "OfficeHaus", "OFH Building", "Tower"
-        address = re.sub(r'(?i)\b(?:tòa nhà|building|officehaus|ofh building|tower)\s+[\w\s\d\-]+(?:,\s*|\s*)', '', address)
+        # Loại bỏ các cụm "Tòa nhà X", "Building Y", "OfficeHaus", "OFH Building", "Tower" và các dạng viết tắt "Tòa X", "Toà Y"
+        address = re.sub(r'(?i)\b(?:tòa nhà|toà nhà|tòa|toà|building|officehaus|ofh building|tower)\s+[\w\d\-]+\b\s*(?:-\s*|\,\s*)?', '', address)
         
         # Làm sạch khoảng trống thừa hoặc dấu phẩy thừa ở đầu/cuối
         address = re.sub(r'^\s*,\s*|\s*,\s*$', '', address)
@@ -111,6 +111,14 @@ class GeocodingProcessor:
         """Tách lấy số nhà, tên đường và tên thành phố chính để tìm kiếm tối giản."""
         parts = [p.strip() for p in address.split(',') if p.strip()]
         if len(parts) < 2:
+            # Nếu không có dấu phẩy nhưng kết thúc bằng tên thành phố lớn
+            addr_lower = address.lower()
+            cities = ["đà nẵng", "da nang", "hà nội", "ha noi", "hồ chí minh", "ho chi minh", "sài gòn", "saigon", "bình dương", "dong nai", "đồng nai"]
+            for c in cities:
+                if addr_lower.endswith(c):
+                    street = address[:-len(c)].strip(" ,-:")
+                    if len(street) > 3:
+                        return f"{street}, {c.title()}, Việt Nam"
             return None
         
         # Thử lấy phần đầu tiên (số nhà/tên đường) và phần cuối cùng (thành phố)
@@ -171,6 +179,104 @@ class GeocodingProcessor:
                 temp_res = self._geocode_nominatim(simplified_addr)
                 if temp_res and temp_res.get("confidence", 0) > (result.get("confidence", 0) if result else 0):
                     result = temp_res
+
+        # Thử tầng 2.2b: Lược bỏ số nhà ở đầu địa chỉ tối giản (nếu vẫn thất bại hoặc confidence thấp)
+        if not result or result.get("confidence", 0) <= 0.6:
+            clean_addr = self._strip_building_info(address_normalized)
+            simplified_addr = self._extract_street_and_city(clean_addr)
+            if simplified_addr:
+                # Strip leading house number (e.g. "44 An Thượng 3" -> "An Thượng 3")
+                no_num_addr = re.sub(r'^\d+[A-Za-z]?\s+', '', simplified_addr)
+                if no_num_addr != simplified_addr:
+                    logger.info(f"[Geocoding] Progressive step 2b (no house number): '{simplified_addr}' -> '{no_num_addr}'")
+                    temp_res = self._geocode_nominatim(no_num_addr)
+                    if temp_res and temp_res.get("confidence", 0) > (result.get("confidence", 0) if result else 0):
+                        result = temp_res
+
+        # Thử tầng 2.3: Phân rã địa chỉ bằng các dấu ngăn cách (dấu phẩy, dòng mới, chấm phẩy hoặc gạch ngang) để loại bỏ các phân đoạn nhiễu (tên công ty, tên quán...)
+        if not result or result.get("confidence", 0) <= 0.6:
+            parts = [p.strip() for p in re.split(r'[,;;\n]|\s+[-\–]\s+', address_normalized) if p.strip()]
+            if len(parts) >= 2:
+                # 1. Thử loại bỏ các phân đoạn bên trái (cho dạng: Tên công ty - Địa chỉ)
+                for i in range(1, len(parts)):
+                    simplified_addr = ", ".join(parts[i:])
+                    if len(simplified_addr.strip()) < 5:
+                        continue
+                    logger.info(f"[Geocoding] Progressive step 3 (strip left segments): try '{simplified_addr}'")
+                    temp_res = self._geocode_nominatim(simplified_addr)
+                    if not temp_res and hasattr(config, "OPENCAGE_API_KEY") and config.OPENCAGE_API_KEY:
+                        temp_res = self._geocode_opencage(simplified_addr)
+                    
+                    # Thử 1a_ext: Chuẩn hóa theo cấu trúc Đường, Thành phố & Bỏ số nhà nếu cần
+                    if not temp_res:
+                        ext_addr = self._extract_street_and_city(simplified_addr)
+                        if ext_addr and ext_addr != simplified_addr:
+                            logger.info(f"[Geocoding] Progressive step 3_ext (left): try '{ext_addr}'")
+                            temp_res = self._geocode_nominatim(ext_addr)
+                            no_num_addr = re.sub(r'^\d+[A-Za-z]?\s+', '', ext_addr)
+                            if not temp_res and no_num_addr != ext_addr:
+                                logger.info(f"[Geocoding] Progressive step 3_no_num (left): try '{no_num_addr}'")
+                                temp_res = self._geocode_nominatim(no_num_addr)
+
+                    if temp_res and temp_res.get("confidence", 0) > 0.6:
+                        temp_res["confidence"] = max(temp_res.get("confidence", 0.75) - (0.05 * i), 0.65)
+                        result = temp_res
+                        break
+
+                    # Thử 1b: Lược bỏ các từ khóa hành chính
+                    cleaned_parts = []
+                    for part in parts[i:]:
+                        p_clean = re.sub(r'(?i)\b(?:phường|quận|đường|thành\s*phố|thị\s*xã|huyện|p\.?|q\.?|đ\.?|tp\.?|tx\.?|h\.?)\s+', '', part)
+                        cleaned_parts.append(p_clean.strip())
+                    simplified_clean_addr = ", ".join(cleaned_parts)
+                    if simplified_clean_addr != simplified_addr and len(simplified_clean_addr.strip()) >= 5:
+                        logger.info(f"[Geocoding] Progressive step 3b (strip prefixes left): try '{simplified_clean_addr}'")
+                        temp_res = self._geocode_nominatim(simplified_clean_addr)
+                        if temp_res and temp_res.get("confidence", 0) > 0.6:
+                            temp_res["confidence"] = max(temp_res.get("confidence", 0.75) - (0.05 * i), 0.65)
+                            result = temp_res
+                            break
+
+                # 2. Thử loại bỏ các phân đoạn bên phải nếu vẫn thất bại (cho dạng: Địa chỉ - Ghi chú/Tên quán)
+                if not result or result.get("confidence", 0) <= 0.6:
+                    for i in range(len(parts) - 1, 0, -1):
+                        simplified_addr = ", ".join(parts[:i])
+                        if len(simplified_addr.strip()) < 5:
+                            continue
+                        logger.info(f"[Geocoding] Progressive step 3c (strip right segments): try '{simplified_addr}'")
+                        temp_res = self._geocode_nominatim(simplified_addr)
+                        if not temp_res and hasattr(config, "OPENCAGE_API_KEY") and config.OPENCAGE_API_KEY:
+                            temp_res = self._geocode_opencage(simplified_addr)
+
+                        # Thử 2a_ext: Chuẩn hóa theo cấu trúc Đường, Thành phố & Bỏ số nhà nếu cần
+                        if not temp_res:
+                            ext_addr = self._extract_street_and_city(simplified_addr)
+                            if ext_addr and ext_addr != simplified_addr:
+                                logger.info(f"[Geocoding] Progressive step 3c_ext (right): try '{ext_addr}'")
+                                temp_res = self._geocode_nominatim(ext_addr)
+                                no_num_addr = re.sub(r'^\d+[A-Za-z]?\s+', '', ext_addr)
+                                if not temp_res and no_num_addr != ext_addr:
+                                    logger.info(f"[Geocoding] Progressive step 3c_no_num (right): try '{no_num_addr}'")
+                                    temp_res = self._geocode_nominatim(no_num_addr)
+
+                        if temp_res and temp_res.get("confidence", 0) > 0.6:
+                            temp_res["confidence"] = max(temp_res.get("confidence", 0.75) - (0.05 * (len(parts) - i)), 0.65)
+                            result = temp_res
+                            break
+
+                        # Thử 2b: Lược bỏ các từ khóa hành chính
+                        cleaned_parts = []
+                        for part in parts[:i]:
+                            p_clean = re.sub(r'(?i)\b(?:phường|quận|đường|thành\s*phố|thị\s*xã|huyện|p\.?|q\.?|đ\.?|tp\.?|tx\.?|h\.?)\s+', '', part)
+                            cleaned_parts.append(p_clean.strip())
+                        simplified_clean_addr = ", ".join(cleaned_parts)
+                        if simplified_clean_addr != simplified_addr and len(simplified_clean_addr.strip()) >= 5:
+                            logger.info(f"[Geocoding] Progressive step 3d (strip prefixes right): try '{simplified_clean_addr}'")
+                            temp_res = self._geocode_nominatim(simplified_clean_addr)
+                            if temp_res and temp_res.get("confidence", 0) > 0.6:
+                                temp_res["confidence"] = max(temp_res.get("confidence", 0.75) - (0.05 * (len(parts) - i)), 0.65)
+                                result = temp_res
+                                break
 
         # Tầng 4: Fallback thủ công theo quận Đà Nẵng
         if not result:
@@ -253,22 +359,22 @@ class GeocodingProcessor:
         if not address:
             return ""
 
-        # 1. Loại bỏ các phần chú thích trong ngoặc đơn chứa chữ "cũ", "mới", "hành chính mới", hoặc tên quận/huyện cũ
-        # Ví dụ: "Phường Tam Hiệp (Thành phố Biên Hòa cũ)" -> "Phường Tam Hiệp"
-        address = re.sub(r'\s*\([^)]*\bcũ\b[^)]*\)', '', address, flags=re.IGNORECASE)
-        address = re.sub(r'\s*\([^)]*\bmới\b[^)]*\)', '', address, flags=re.IGNORECASE)
-        address = re.sub(r'\s*\([^)]*\bhành\s*chính[^)]*\)', '', address, flags=re.IGNORECASE)
+        # 0. Loại bỏ các tiền tố mô tả địa điểm hoặc ghi chú không phải địa chỉ ở đầu câu (ví dụ: "phỏng vấn: ", "địa chỉ: ")
+        address = re.sub(r'(?i)^\s*(?:phỏng\s*vấn\s*(?:tại)?|địa\s*chỉ|địa\s*điểm|nơi\s*làm\s*việc|làm\s*việc\s*(?:tại)?)\s*[:\-–]\s*', '', address)
+
+        # 1. Loại bỏ từ khóa thừa "cũ", "mới", "hành chính mới" trong ngoặc đơn nhưng GIỮ LẠI nội dung hữu ích (như tên quận/huyện)
+        address = re.sub(r'(?i)\b(?:cũ|mới|hành\s*chính|hành\s*chính\s*mới)\b', '', address)
         
-        # 2. Loại bỏ các ngoặc đơn rỗng hoặc ngoặc đơn chứa thông tin phụ không cần thiết cho geocoding
-        address = re.sub(r'\s*\([^)]*\)', '', address)
+        # Thay thế các dấu ngoặc đơn thành dấu phẩy để biến nội dung bên trong thành phân đoạn địa chỉ hợp lệ
+        address = address.replace("(", ", ").replace(")", ", ")
         
-        # 3. Làm sạch dấu phẩy kép, dấu hai chấm thừa
+        # 2. Làm sạch dấu phẩy kép, dấu hai chấm thừa
         address = re.sub(r'\s*:\s*', ', ', address)
         address = re.sub(r',+', ',', address)
         address = re.sub(r'\s*,\s*', ', ', address)
         address = address.strip(" ,:")
         
-        # 4. Dịch các cụm từ tiếng Anh sang tiếng Việt
+        # 3. Dịch các cụm từ tiếng Anh sang tiếng Việt
         address = self._translate_english_terms(address)
         address = address.strip(" ,:")
 
@@ -384,10 +490,14 @@ class GeocodingProcessor:
 
             if data:
                 item = data[0]
+                importance = float(item.get("importance", 0.5))
+                # Nominatim importance can be very small for local street/building queries (e.g. 0.00007).
+                # We map low importance values to a decent baseline (0.7-0.95) to prevent discarding correct results.
+                confidence = round(min(0.75 + (importance * 0.25), 0.95), 2)
                 return {
                     "lat": float(item["lat"]),
                     "lng": float(item["lon"]),
-                    "confidence": min(float(item.get("importance", 0.5)), 1.0),
+                    "confidence": confidence,
                     "formatted_address": item.get("display_name", address),
                     "source": "nominatim",
                 }

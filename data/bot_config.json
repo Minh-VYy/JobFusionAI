@@ -1,43 +1,65 @@
 {
-  "max_posts_per_group": 5,
-  "max_groups_per_session": 3,
-  "max_days_old": 3,
-  "facebook_groups": [
-    {
-      "name": "VIỆC LÀM THỜI VỤ ĐÀ NẴNG GROUP",
-      "url": "https://www.facebook.com/groups/358744117181132"
+  "facebook": {
+    "enabled": true,
+    "max_posts_per_group": 5,
+    "max_groups_per_session": 3,
+    "max_days_old": 3,
+    "moderation_policy": {
+      "mode": "manual",
+      "learn_from_admin": true
     },
-    {
-      "name": "Tìm kiếm việc làm tại Đà Nẵng",
-      "url": "https://www.facebook.com/groups/422673553710542"
-    },
-    {
-      "name": "VIỆC LÀM PHỤC VỤ PHA CHẾ ĐÀ NẴNG",
-      "url": "https://www.facebook.com/groups/363005460084694"
-    },
-    {
-      "name": "Việc làm Đà Nẵng full/part-time SV",
-      "url": "https://www.facebook.com/groups/360683986995278"
-    },
-    {
-      "name": "Hội Tìm Việc Làm Thêm SV Đà Nẵng",
-      "url": "https://www.facebook.com/groups/360978689839999"
-    },
-    {
-      "name": "Hội Việc Làm Đà Nẵng - Viec Lam Da Nang",
-      "url": "https://www.facebook.com/groups/471999991646484"
-    },
-    {
-      "name": "VIỆC LÀM - ĐÀ NẴNG",
-      "url": "https://www.facebook.com/groups/444340500105671"
-    },
-    {
-      "name": "Việc Làm Đà Nẵng",
-      "url": "https://www.facebook.com/groups/sieuthiphuyen78"
-    },
-    {
-      "name": "Hội Tìm Việc Làm Thêm Cho SV Đà Nẵng",
-      "url": "https://www.facebook.com/groups/thichlamthemcom"
-    }
-  ]
+    "facebook_groups": [
+      {
+        "name": "VIỆC LÀM THỜI VỤ ĐÀ NẴNG GROUP",
+        "url": "https://www.facebook.com/groups/358744117181132"
+      },
+      {
+        "name": "Tìm kiếm việc làm tại Đà Nẵng",
+        "url": "https://www.facebook.com/groups/422673553710542"
+      },
+      {
+        "name": "VIỆC LÀM PHỤC VỤ PHA CHẾ ĐÀ NẴNG",
+        "url": "https://www.facebook.com/groups/363005460084694"
+      },
+      {
+        "name": "Việc làm Đà Nẵng full/part-time SV",
+        "url": "https://www.facebook.com/groups/360683986995278"
+      },
+      {
+        "name": "Hội Tìm Việc Làm Thêm SV Đà Nẵng",
+        "url": "https://www.facebook.com/groups/360978689839999"
+      },
+      {
+        "name": "Hội Việc Làm Đà Nẵng - Viec Lam Da Nang",
+        "url": "https://www.facebook.com/groups/471999991646484"
+      },
+      {
+        "name": "VIỆC LÀM - ĐÀ NẴNG",
+        "url": "https://www.facebook.com/groups/444340500105671"
+      },
+      {
+        "name": "Việc Làm Đà Nẵng",
+        "url": "https://www.facebook.com/groups/sieuthiphuyen78"
+      },
+      {
+        "name": "Hội Tìm Việc Làm Thêm Cho SV Đà Nẵng",
+        "url": "https://www.facebook.com/groups/thichlamthemcom"
+      }
+    ]
+  },
+  "topcv": {
+    "enabled": true,
+    "max_pages": 2,
+    "headless": true
+  },
+  "itviec": {
+    "enabled": true,
+    "max_pages": 1,
+    "headless": true
+  },
+  "vietnamworks": {
+    "enabled": true,
+    "max_pages": 2,
+    "headless": true
+  }
 }

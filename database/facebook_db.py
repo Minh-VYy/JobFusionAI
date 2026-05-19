@@ -2,6 +2,7 @@
 import pyodbc
 import logging
 import os
+import json
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -37,6 +38,20 @@ class FacebookDB:
     def __exit__(self, *args):
         self.disconnect()
 
+    def _get_moderation_mode(self) -> str:
+        config_path = os.path.join(
+            os.path.dirname(os.path.dirname(__file__)), "data", "bot_config.json"
+        )
+        default_mode = "manual"
+        try:
+            with open(config_path, "r", encoding="utf-8") as f:
+                config_data = json.load(f)
+            policy = config_data.get("moderation_policy") or {}
+            mode = str(policy.get("mode", default_mode)).lower()
+            return mode if mode in ("auto", "manual") else default_mode
+        except Exception:
+            return default_mode
+
     # ============================================================
     # SETUP TABLES
     # ============================================================
@@ -47,7 +62,8 @@ class FacebookDB:
         """
         cursor = self.conn.cursor()
 
-        cursor.execute("""
+        cursor.execute(
+            """
         IF NOT EXISTS (
             SELECT * FROM sysobjects
             WHERE name='facebook_groups' AND xtype='U'
@@ -68,10 +84,10 @@ class FacebookDB:
             is_active       BIT            DEFAULT 1,
             created_at      DATETIME       DEFAULT GETUTCDATE()
         )
-        """)
+        """
+        )
         self.conn.commit()
         logger.info("✅ Tables ready")
-
 
     # ============================================================
     # INSERT JOB
@@ -80,6 +96,9 @@ class FacebookDB:
     def insert_facebook_job(self, job_data: dict) -> bool:
         """Insert job Facebook bằng câu SQL atomic (tránh race condition)."""
         cursor = self.conn.cursor()
+        moderation_mode = self._get_moderation_mode()
+        job_status = "approved" if moderation_mode == "auto" else "pending"
+        needs_review = 0 if moderation_mode == "auto" else 1
 
         job_url = job_data.get("job_url", "")[:1000]
         post_id = job_data.get("post_id", "")[:200]
@@ -87,12 +106,13 @@ class FacebookDB:
 
         # Định vị động địa điểm cụ thể
         from geocoding import geocoder
+
         location = job_data.get("location", "").strip()
-        
+
         # Mặc định Đà Nẵng nếu không tìm thấy địa chỉ cụ thể
         lat, lng, confidence = 16.0544, 108.2022, 0.0
         is_geocoded = 0
-        
+
         if location and len(location) > 3:
             res = geocoder.geocode(location)
             if res:
@@ -102,13 +122,14 @@ class FacebookDB:
                 is_geocoded = 1 if confidence >= 0.3 else 0
 
         # Atomic INSERT ... WHERE NOT EXISTS (ngăn race condition)
-        cursor.execute("""
+        cursor.execute(
+            """
             INSERT INTO jobs (
                 title, company, description,
                 salary_raw, address_raw, address_clean,
                 skills, source_url, source_name,
                 external_id, status,
-                is_geocoded, latitude, longitude, geocoding_confidence,
+                is_geocoded, needs_review, latitude, longitude, geocoding_confidence,
                 normalized_title, normalized_location,
                 salary_min, salary_max, phone,
                 fingerprint_hash, source_type,
@@ -119,8 +140,8 @@ class FacebookDB:
                 ?, ?, ?,
                 ?, ?, ?,
                 ?, ?, 'facebook',
-                ?, 'pending',
-                ?, ?, ?, ?,
+                ?, ?,
+                ?, ?, ?, ?, ?,
                 ?, ?,
                 ?, ?, ?,
                 ?, 'facebook',
@@ -132,36 +153,44 @@ class FacebookDB:
                    OR (external_id = ? AND source_name = 'facebook')
                    OR (fingerprint_hash = ? AND fingerprint_hash != '')
             )
-        """, (
-            job_data.get("title", "")[:500],
-            job_data.get("company", "")[:300],
-            job_data.get("description", ""),
-            job_data.get("salary", "")[:200],
-            job_data.get("location", "")[:500],
-            job_data.get("location", "")[:500],
-            job_data.get("skills", "")[:1000],
-            job_url,
-            post_id,
-            is_geocoded, lat, lng, confidence,
-            job_data.get("normalized_title", "")[:500],
-            job_data.get("normalized_location", "")[:300],
-            job_data.get("salary_min", None),
-            job_data.get("salary_max", None),
-            job_data.get("phone", "")[:50],
-            fp_hash,
-            job_data.get("job_type", "")[:100],
-            job_data.get("requirements", ""),
-            job_data.get("posted_date", None) if job_data.get("posted_date") else None,
-            # WHERE NOT EXISTS params
-            job_url,
-            post_id,
-            fp_hash
-        ))
+        """,
+            (
+                job_data.get("title", "")[:500],
+                job_data.get("company", "")[:300],
+                job_data.get("description", ""),
+                job_data.get("salary", "")[:200],
+                job_data.get("location", "")[:500],
+                job_data.get("location", "")[:500],
+                job_data.get("skills", "")[:1000],
+                job_url,
+                post_id,
+                job_status,
+                is_geocoded,
+                needs_review,
+                lat,
+                lng,
+                confidence,
+                job_data.get("normalized_title", "")[:500],
+                job_data.get("normalized_location", "")[:300],
+                job_data.get("salary_min", None),
+                job_data.get("salary_max", None),
+                job_data.get("phone", "")[:50],
+                fp_hash,
+                job_data.get("job_type", "")[:100],
+                job_data.get("requirements", ""),
+                job_data.get("posted_date", None)
+                if job_data.get("posted_date")
+                else None,
+                # WHERE NOT EXISTS params
+                job_url,
+                post_id,
+                fp_hash,
+            ),
+        )
 
         self.conn.commit()
         return cursor.rowcount > 0
 
-    
     # ============================================================
     # GROUP TRUST SCORE
     # ============================================================
@@ -170,7 +199,8 @@ class FacebookDB:
         """Tạo hoặc cập nhật thông tin group"""
         cursor = self.conn.cursor()
 
-        cursor.execute("""
+        cursor.execute(
+            """
         MERGE facebook_groups AS target
         USING (SELECT ? AS group_id) AS source
         ON target.group_id = source.group_id
@@ -189,21 +219,22 @@ class FacebookDB:
                     trust_score, crawl_priority, last_crawled)
             VALUES (?, ?, ?, ?, ?, GETUTCDATE());
         """,
-        (
-            group_data["group_id"],
-            group_data.get("trust_score", 0.5),
-            group_data.get("spam_ratio", 0.0),
-            group_data.get("duplicate_ratio", 0.0),
-            group_data.get("crawl_priority", "normal"),
-            group_data.get("total_crawled", 0),
-            group_data.get("total_spam", 0),
-            group_data.get("total_duplicate", 0),
-            group_data["group_id"],
-            group_data.get("group_name", ""),
-            group_data.get("group_url", ""),
-            group_data.get("trust_score", 0.5),
-            group_data.get("crawl_priority", "normal"),
-        ))
+            (
+                group_data["group_id"],
+                group_data.get("trust_score", 0.5),
+                group_data.get("spam_ratio", 0.0),
+                group_data.get("duplicate_ratio", 0.0),
+                group_data.get("crawl_priority", "normal"),
+                group_data.get("total_crawled", 0),
+                group_data.get("total_spam", 0),
+                group_data.get("total_duplicate", 0),
+                group_data["group_id"],
+                group_data.get("group_name", ""),
+                group_data.get("group_url", ""),
+                group_data.get("trust_score", 0.5),
+                group_data.get("crawl_priority", "normal"),
+            ),
+        )
 
         self.conn.commit()
 
@@ -227,7 +258,8 @@ class FacebookDB:
         """Load jobs gần nhất từ DB để làm baseline cho CrossSourceDetector."""
         try:
             cursor = self.conn.cursor()
-            cursor.execute("""
+            cursor.execute(
+                """
                 SELECT TOP (?) external_id, source_name,
                        title, company, address_raw, salary_raw,
                        phone, normalized_title, normalized_location,
@@ -235,11 +267,24 @@ class FacebookDB:
                 FROM jobs
                 WHERE external_id IS NOT NULL
                 ORDER BY scraped_at DESC
-            """, (limit,))
+            """,
+                (limit,),
+            )
             rows = cursor.fetchall()
-            cols = ["job_id", "source", "title", "company", "location",
-                    "salary", "phone", "normalized_title", "normalized_location",
-                    "salary_min", "salary_max", "fingerprint_hash"]
+            cols = [
+                "job_id",
+                "source",
+                "title",
+                "company",
+                "location",
+                "salary",
+                "phone",
+                "normalized_title",
+                "normalized_location",
+                "salary_min",
+                "salary_max",
+                "fingerprint_hash",
+            ]
             return [dict(zip(cols, row)) for row in rows]
         except Exception as e:
             logger.warning(f"get_jobs_for_cross_detection failed: {e}")

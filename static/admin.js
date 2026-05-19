@@ -138,9 +138,15 @@ async function fetchTasks() {
         // Đồng bộ hóa trạng thái Lịch Chạy trên UI
         tasksRes.forEach(t => {
             const source = t.source_name ? t.source_name.toLowerCase() : '';
-            if (source === 'facebook' || source === 'topcv') {
-                const selectId = source === 'facebook' ? 'schedule-fb' : 'schedule-topcv';
-                const toggleId = source === 'facebook' ? 'toggle-fb' : 'toggle-topcv';
+                const scheduleMap = {
+                    facebook: { selectId: 'schedule-fb', toggleId: 'toggle-fb' },
+                    topcv: { selectId: 'schedule-topcv', toggleId: 'toggle-topcv' },
+                    itviec: { selectId: 'schedule-itviec', toggleId: 'toggle-itviec' },
+                    vietnamworks: { selectId: 'schedule-vietnamworks', toggleId: 'toggle-vietnamworks' }
+                };
+
+                if (scheduleMap[source]) {
+                    const { selectId, toggleId } = scheduleMap[source];
 
                 const selectEl = document.getElementById(selectId);
                 const toggleEl = document.getElementById(toggleId);
@@ -170,10 +176,17 @@ async function runBotNow(taskId, botName) {
     let apiPath = `/admin/tasks/${taskId}/run`;
     let name = botName || taskId;
 
-    if (taskId === 'facebook' || taskId === 'topcv') {
+        const sourceTaskIds = ['facebook', 'topcv', 'itviec', 'vietnamworks'];
+
+        if (sourceTaskIds.includes(taskId)) {
         btnId = taskId === 'facebook' ? 'btn-fb' : 'btn-topcv';
+            if (taskId === 'itviec') btnId = 'btn-itviec';
+            if (taskId === 'vietnamworks') btnId = 'btn-vietnamworks';
         apiPath = `/admin/tasks/by-source/${taskId}/run`;
-        name = taskId === 'facebook' ? 'Facebook' : 'TopCV';
+            if (taskId === 'facebook') name = 'Facebook';
+            else if (taskId === 'topcv') name = 'TopCV';
+            else if (taskId === 'itviec') name = 'ITviec';
+            else if (taskId === 'vietnamworks') name = 'VietnamWorks';
     }
 
     const btn = document.getElementById(btnId);
@@ -211,6 +224,15 @@ async function loadReviewJobs() {
         }
 
         jobsData = data;
+
+        const sourceFilter = document.getElementById('filter-source');
+        if (sourceFilter && !sourceFilter.value) {
+            const hasFacebookJobs = data.some(j => (j.source_name || '').toLowerCase() === 'facebook');
+            if (hasFacebookJobs) {
+                sourceFilter.value = 'facebook';
+            }
+        }
+
         filterJobs();
 
     } catch (e) {
@@ -255,8 +277,8 @@ function renderJobsTable(jobs) {
             </td>
             <td><span class="source-badge">${j.source_name || 'N/A'}</span></td>
             <td>${j.salary_raw || 'Thỏa thuận'}</td>
-            <td class="truncate" style="max-width: 150px;" title="${j.address_raw || ''}">${j.address_raw || 'Trống'}</td>
-            <td>${new Date(j.created_at || Date.now()).toLocaleDateString('vi-VN')}</td>
+            <td class="truncate" style="max-width: 150px;" title="${j.address_raw || j.address_clean || ''}">${j.address_raw || j.address_clean || 'Trống'}</td>
+            <td>${new Date(j.scraped_at || j.created_at || Date.now()).toLocaleDateString('vi-VN')}</td>
             <td><span class="status-badge status-${j.status || 'pending'}">${(j.status || 'Pending').toUpperCase()}</span></td>
             <td>
                 <button class="btn-sm" style="background:#e0e7ff;color:#4338ca;border:none;padding:6px 12px;border-radius:4px;cursor:pointer;font-weight:600;" onclick="openReviewModal(${j.id})">Review</button>
@@ -274,12 +296,24 @@ function openReviewModal(jobId) {
     currentReviewJob = job;
 
     document.getElementById('modal-job-id').textContent = `Job #${job.id}`;
-    document.getElementById('modal-raw-content').textContent = job.description || job.requirements || 'Nội dung chưa lấy được đầy đủ...';
+    const rawContent = [job.title, job.company, job.description, job.requirements]
+        .filter(Boolean)
+        .join('\n\n');
+    document.getElementById('modal-raw-content').textContent = rawContent || 'Nội dung chưa lấy được đầy đủ...';
     document.getElementById('modal-source-badge').textContent = job.source_name || 'N/A';
-    document.getElementById('modal-crawled-at').textContent = `Crawled: ${new Date(job.created_at || Date.now()).toLocaleString('vi-VN')}`;
+    document.getElementById('modal-crawled-at').textContent = `Crawled: ${new Date(job.scraped_at || job.created_at || Date.now()).toLocaleString('vi-VN')}`;
+    const sourceUrlEl = document.getElementById('modal-source-url');
+    if (sourceUrlEl) {
+        sourceUrlEl.textContent = job.source_url || 'Không có link nguồn';
+        sourceUrlEl.href = job.source_url || '#';
+        sourceUrlEl.style.pointerEvents = job.source_url ? 'auto' : 'none';
+        sourceUrlEl.style.opacity = job.source_url ? '1' : '0.7';
+    }
 
     // Fill Form Forms
     document.getElementById('field-title').value = job.title || '';
+    const companyField = document.getElementById('field-company');
+    if (companyField) companyField.value = job.company || '';
     document.getElementById('field-salary-min').value = job.salary_min || '';
     document.getElementById('field-salary-max').value = job.salary_max || '';
     document.getElementById('field-location').value = job.address_clean || job.address_raw || '';
@@ -324,13 +358,28 @@ async function reviewJob(action) {
     document.getElementById(btnId).innerHTML = 'Đang xử lý...';
 
     try {
+        const salaryMinValue = parseFloat(document.getElementById('field-salary-min').value);
+        const salaryMaxValue = parseFloat(document.getElementById('field-salary-max').value);
+        const skillsText = document.getElementById('field-skills').value || '';
+        const skillsList = skillsText
+            .split(',')
+            .map(item => item.trim())
+            .filter(Boolean);
+
         const payload = {
-            status: action === 'approve' ? 'approved' : 'rejected',
+            action,
+            title: document.getElementById('field-title').value,
             title_corrected: document.getElementById('field-title').value,
-            salary_min_corrected: document.getElementById('field-salary-min').value,
-            salary_max_corrected: document.getElementById('field-salary-max').value,
+            company: document.getElementById('field-company') ? document.getElementById('field-company').value : '',
+            company_corrected: document.getElementById('field-company') ? document.getElementById('field-company').value : '',
+            salary_min: Number.isFinite(salaryMinValue) ? salaryMinValue : null,
+            salary_min_corrected: Number.isFinite(salaryMinValue) ? salaryMinValue : null,
+            salary_max: Number.isFinite(salaryMaxValue) ? salaryMaxValue : null,
+            salary_max_corrected: Number.isFinite(salaryMaxValue) ? salaryMaxValue : null,
+            address_clean: document.getElementById('field-location').value,
             location_corrected: document.getElementById('field-location').value,
-            skills_corrected: document.getElementById('field-skills').value,
+            skills: skillsList,
+            skills_corrected: skillsList,
         };
 
         // Thực tế sẽ gọi API cập nhật trạng thái review:
@@ -445,7 +494,13 @@ function initCharts(analytics) {
 async function updateSchedule(source, value) {
     toast(`Đang cập nhật lịch chạy cho bot ${source} thành ${value}...`, 'info');
     try {
-        const toggleId = source === 'facebook' ? 'toggle-fb' : 'toggle-topcv';
+            const toggleMap = {
+                facebook: 'toggle-fb',
+                topcv: 'toggle-topcv',
+                itviec: 'toggle-itviec',
+                vietnamworks: 'toggle-vietnamworks'
+            };
+            const toggleId = toggleMap[source] || 'toggle-fb';
         const toggleEl = document.getElementById(toggleId);
         const isScheduled = toggleEl ? toggleEl.classList.contains('active') : false;
 
@@ -473,7 +528,13 @@ async function toggleSchedule(source, el) {
         el.classList.add('active');
     }
 
-    const selectId = source === 'facebook' ? 'schedule-fb' : 'schedule-topcv';
+    const selectMap = {
+        facebook: 'schedule-fb',
+        topcv: 'schedule-topcv',
+        itviec: 'schedule-itviec',
+        vietnamworks: 'schedule-vietnamworks'
+    };
+    const selectId = selectMap[source] || 'schedule-fb';
     const selectEl = document.getElementById(selectId);
     const cronValue = selectEl ? selectEl.value : '12:00';
 
@@ -496,21 +557,115 @@ async function toggleSchedule(source, el) {
     }
 }
 
-let currentBotConfig = {
-    max_posts_per_group: 5,
-    max_groups_per_session: 3,
-    max_days_old: 3,
-    facebook_groups: []
+const BOT_CONFIG_DEFAULT = {
+    facebook: {
+        enabled: true,
+        max_posts_per_group: 5,
+        max_groups_per_session: 3,
+        max_days_old: 3,
+        facebook_groups: [],
+        moderation_policy: {
+            mode: 'manual',
+            learn_from_admin: true,
+        },
+    },
+    topcv: {
+        enabled: true,
+        max_pages: 2,
+        headless: true,
+    },
+    itviec: {
+        enabled: true,
+        max_pages: 1,
+        headless: true,
+    },
+    vietnamworks: {
+        enabled: true,
+        max_pages: 2,
+        headless: true,
+    },
 };
+
+let currentBotConfig = JSON.parse(JSON.stringify(BOT_CONFIG_DEFAULT));
+
+function normalizeBotConfig(rawConfig) {
+    const merged = JSON.parse(JSON.stringify(BOT_CONFIG_DEFAULT));
+    if (!rawConfig || typeof rawConfig !== 'object') return merged;
+
+    const legacyFacebook = rawConfig.max_posts_per_group !== undefined
+        || rawConfig.max_groups_per_session !== undefined
+        || rawConfig.max_days_old !== undefined
+        || rawConfig.facebook_groups !== undefined
+        || rawConfig.moderation_policy !== undefined;
+
+    if (legacyFacebook) {
+        rawConfig.facebook = {
+            ...(rawConfig.facebook || {}),
+            max_posts_per_group: rawConfig.max_posts_per_group ?? merged.facebook.max_posts_per_group,
+            max_groups_per_session: rawConfig.max_groups_per_session ?? merged.facebook.max_groups_per_session,
+            max_days_old: rawConfig.max_days_old ?? merged.facebook.max_days_old,
+            facebook_groups: rawConfig.facebook_groups ?? merged.facebook.facebook_groups,
+            moderation_policy: rawConfig.moderation_policy ?? merged.facebook.moderation_policy,
+        };
+    }
+
+    Object.keys(BOT_CONFIG_DEFAULT).forEach(source => {
+        if (!rawConfig[source] || typeof rawConfig[source] !== 'object') return;
+        merged[source] = { ...merged[source], ...rawConfig[source] };
+        if (source === 'facebook') {
+            merged.facebook.moderation_policy = {
+                ...BOT_CONFIG_DEFAULT.facebook.moderation_policy,
+                ...(rawConfig.facebook.moderation_policy || {}),
+            };
+        }
+    });
+
+    return merged;
+}
+
+function getSourceConfig(source) {
+    currentBotConfig[source] = currentBotConfig[source] || JSON.parse(JSON.stringify(BOT_CONFIG_DEFAULT[source]));
+    return currentBotConfig[source];
+}
+
+function setCheckboxValue(id, value) {
+    const el = document.getElementById(id);
+    if (el) el.checked = Boolean(value);
+}
+
+function setInputValue(id, value) {
+    const el = document.getElementById(id);
+    if (el) el.value = value ?? '';
+}
 
 async function fetchBotConfig() {
     try {
-        currentBotConfig = await apiFetch('/admin/bot-config');
+        currentBotConfig = normalizeBotConfig(await apiFetch('/admin/bot-config'));
 
-        // Điền dữ liệu vào form
-        document.getElementById('cfg-max-posts').value = currentBotConfig.max_posts_per_group || 5;
-        document.getElementById('cfg-max-groups').value = currentBotConfig.max_groups_per_session || 3;
-        document.getElementById('cfg-max-days').value = currentBotConfig.max_days_old || 3;
+        const facebook = getSourceConfig('facebook');
+        setInputValue('cfg-max-posts', facebook.max_posts_per_group);
+        setInputValue('cfg-max-groups', facebook.max_groups_per_session);
+        setInputValue('cfg-max-days', facebook.max_days_old);
+        setCheckboxValue('cfg-fb-enabled', facebook.enabled !== false);
+        const moderationModeField = document.getElementById('cfg-moderation-mode');
+        const learnField = document.getElementById('cfg-learn-from-admin');
+        if (moderationModeField) moderationModeField.value = facebook.moderation_policy?.mode || 'manual';
+        if (learnField) learnField.checked = facebook.moderation_policy?.learn_from_admin !== false;
+
+        const topcv = getSourceConfig('topcv');
+        setCheckboxValue('cfg-topcv-enabled', topcv.enabled !== false);
+        setInputValue('cfg-topcv-max-pages', topcv.max_pages);
+        setCheckboxValue('cfg-topcv-headless', topcv.headless !== false);
+
+        const itviec = getSourceConfig('itviec');
+        setCheckboxValue('cfg-itviec-enabled', itviec.enabled !== false);
+        setInputValue('cfg-itviec-max-pages', itviec.max_pages);
+        setCheckboxValue('cfg-itviec-headless', itviec.headless !== false);
+
+        const vietnamworks = getSourceConfig('vietnamworks');
+        setCheckboxValue('cfg-vietnamworks-enabled', vietnamworks.enabled !== false);
+        setInputValue('cfg-vietnamworks-max-pages', vietnamworks.max_pages);
+        setCheckboxValue('cfg-vietnamworks-headless', vietnamworks.headless !== false);
 
         renderFacebookGroups();
     } catch (e) {
@@ -522,14 +677,13 @@ function renderFacebookGroups() {
     const container = document.getElementById('fb-groups-list-container');
     if (!container) return;
 
-    const groups = currentBotConfig.facebook_groups || [];
+    const groups = getSourceConfig('facebook').facebook_groups || [];
     if (groups.length === 0) {
         container.innerHTML = `<div style="text-align: center; color: #64748b; padding: 20px; font-size: 12px; background: #f8fafc; border-radius: 6px; border: 1px dashed #cbd5e1;">Danh sách trống. Nhập ở trên để thêm nhóm mới.</div>`;
         return;
     }
 
-    container.innerHTML = groups.map((g, index) => {
-        return `
+    container.innerHTML = groups.map((g, index) => `
         <div style="display: flex; justify-content: space-between; align-items: center; padding: 8px 12px; background: white; border: 1px solid #e2e8f0; border-radius: 6px; margin-bottom: 8px; box-shadow: 0 1px 2px 0 rgba(0, 0, 0, 0.05); gap: 12px;">
             <div style="display: flex; flex-direction: column; overflow: hidden; flex: 1;">
                 <div style="font-size: 13px; font-weight: 600; color: #1e293b; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">${g.name}</div>
@@ -539,8 +693,7 @@ function renderFacebookGroups() {
                 Xóa
             </button>
         </div>
-        `;
-    }).join('');
+    `).join('');
 }
 
 function addNewGroup() {
@@ -560,43 +713,62 @@ function addNewGroup() {
         return;
     }
 
-    if (!currentBotConfig.facebook_groups) {
-        currentBotConfig.facebook_groups = [];
+    const facebook = getSourceConfig('facebook');
+    if (!facebook.facebook_groups) {
+        facebook.facebook_groups = [];
     }
 
-    currentBotConfig.facebook_groups.push({ name, url });
+    facebook.facebook_groups.push({ name, url });
 
     nameInput.value = '';
     urlInput.value = '';
 
-    toast('Đã thêm nhóm mới vào danh sách (nhấn "Lưu Cấu Hình" để áp dụng)!', 'info');
+    toast('Đã thêm nhóm mới vào danh sách (nhấn "Lưu Facebook" để áp dụng)!', 'info');
     renderFacebookGroups();
 }
 
 function deleteGroup(index) {
-    if (confirm(`Bạn chắc chắn muốn xóa nhóm "${currentBotConfig.facebook_groups[index].name}" khỏi danh sách?`)) {
-        currentBotConfig.facebook_groups.splice(index, 1);
-        toast('Đã xóa nhóm (nhấn "Lưu Cấu Hình" để áp dụng)!', 'info');
+    const facebook = getSourceConfig('facebook');
+    if (confirm(`Bạn chắc chắn muốn xóa nhóm "${facebook.facebook_groups[index].name}" khỏi danh sách?`)) {
+        facebook.facebook_groups.splice(index, 1);
+        toast('Đã xóa nhóm (nhấn "Lưu Facebook" để áp dụng)!', 'info');
         renderFacebookGroups();
     }
 }
 
 async function saveBotConfig() {
-    const maxPosts = parseInt(document.getElementById('cfg-max-posts').value) || 5;
-    const maxGroups = parseInt(document.getElementById('cfg-max-groups').value) || 3;
-    const maxDays = parseInt(document.getElementById('cfg-max-days').value) || 3;
+    await saveSourceConfig('facebook');
+}
 
-    currentBotConfig.max_posts_per_group = maxPosts;
-    currentBotConfig.max_groups_per_session = maxGroups;
-    currentBotConfig.max_days_old = maxDays;
+async function saveSourceConfig(source) {
+    currentBotConfig = normalizeBotConfig(currentBotConfig);
+    const sourceConfig = getSourceConfig(source);
 
-    toast('Đang lưu cấu hình bot...', 'info');
+    if (source === 'facebook') {
+        sourceConfig.enabled = document.getElementById('cfg-fb-enabled') ? document.getElementById('cfg-fb-enabled').checked : true;
+        sourceConfig.max_posts_per_group = parseInt(document.getElementById('cfg-max-posts').value) || 5;
+        sourceConfig.max_groups_per_session = parseInt(document.getElementById('cfg-max-groups').value) || 3;
+        sourceConfig.max_days_old = parseInt(document.getElementById('cfg-max-days').value) || 3;
+        sourceConfig.moderation_policy = {
+            mode: document.getElementById('cfg-moderation-mode') ? document.getElementById('cfg-moderation-mode').value : 'manual',
+            learn_from_admin: document.getElementById('cfg-learn-from-admin') ? document.getElementById('cfg-learn-from-admin').checked : true,
+        };
+    } else {
+        const enabledId = `cfg-${source}-enabled`;
+        const pagesId = `cfg-${source}-max-pages`;
+        const headlessId = `cfg-${source}-headless`;
+        sourceConfig.enabled = document.getElementById(enabledId) ? document.getElementById(enabledId).checked : true;
+        sourceConfig.max_pages = parseInt(document.getElementById(pagesId).value) || sourceConfig.max_pages || 1;
+        sourceConfig.headless = document.getElementById(headlessId) ? document.getElementById(headlessId).checked : true;
+    }
+
+    toast(`Đang lưu cấu hình ${source}...`, 'info');
     try {
         await apiFetch('/admin/bot-config', {
             method: 'POST',
             body: JSON.stringify(currentBotConfig)
         });
-        toast('Đã lưu cấu hình bot thành công!', 'success');
+        toast(`Đã lưu cấu hình ${source} thành công!`, 'success');
         fetchBotConfig();
     } catch (e) {
         toast(`Lỗi lưu cấu hình: ${e.message}`, 'error');

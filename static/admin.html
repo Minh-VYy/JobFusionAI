@@ -110,6 +110,16 @@
             Chạy Bot TopCV Ngay
             <span class="btn-spinner" id="spinner-topcv"></span>
           </button>
+          <button class="btn-emergency" onclick="runBotNow('itviec')" id="btn-itviec">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 7h16M4 12h10M4 17h16"/></svg>
+            Chạy Bot ITviec Ngay
+            <span class="btn-spinner" id="spinner-itviec"></span>
+          </button>
+          <button class="btn-emergency" onclick="runBotNow('vietnamworks')" id="btn-vietnamworks">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 6h16v12H4z"/><path d="M7 10h10M7 14h6"/></svg>
+            Chạy Bot VietnamWorks Ngay
+            <span class="btn-spinner" id="spinner-vietnamworks"></span>
+          </button>
         </div>
       </div>
 
@@ -152,14 +162,46 @@
               </div>
             </div>
           </div>
+          <div class="schedule-item">
+            <label class="schedule-label">ITviec Crawler</label>
+            <div class="schedule-controls">
+              <select class="select-field" id="schedule-itviec" onchange="updateSchedule('itviec', this.value)">
+                <option value="08:00" selected>08:00 sáng</option>
+                <option value="12:00">12:00 trưa</option>
+                <option value="18:00">18:00 chiều</option>
+                <option value="22:00">22:00 tối</option>
+                <option value="*/6h">Mỗi 6 tiếng</option>
+                <option value="*/12h">Mỗi 12 tiếng</option>
+              </select>
+              <div class="toggle-switch" id="toggle-itviec" onclick="toggleSchedule('itviec', this)">
+                <div class="toggle-knob"></div>
+              </div>
+            </div>
+          </div>
+          <div class="schedule-item">
+            <label class="schedule-label">VietnamWorks Crawler</label>
+            <div class="schedule-controls">
+              <select class="select-field" id="schedule-vietnamworks" onchange="updateSchedule('vietnamworks', this.value)">
+                <option value="08:00" selected>08:00 sáng</option>
+                <option value="12:00">12:00 trưa</option>
+                <option value="18:00">18:00 chiều</option>
+                <option value="22:00">22:00 tối</option>
+                <option value="*/6h">Mỗi 6 tiếng</option>
+                <option value="*/12h">Mỗi 12 tiếng</option>
+              </select>
+              <div class="toggle-switch" id="toggle-vietnamworks" onclick="toggleSchedule('vietnamworks', this)">
+                <div class="toggle-knob"></div>
+              </div>
+            </div>
+          </div>
         </div>
       </div>
 
       <!-- Crawler Tuning & Facebook Groups Card -->
       <div class="card" id="config-card">
         <div class="card-header">
-          <div class="card-title">Cấu Hình Thông Số Cào Dữ Liệu</div>
-          <div class="card-subtitle">Tinh chỉnh các tham số cào và quản lý danh sách nhóm Facebook không giới hạn</div>
+          <div class="card-title">Cấu Hình Facebook</div>
+          <div class="card-subtitle">Thiết lập riêng cho Facebook: số bài, số group, độ cũ bài đăng và danh sách group.</div>
         </div>
         
         <div class="config-grid" style="display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 24px; margin-top: 16px;">
@@ -182,6 +224,20 @@
               <input type="number" class="input-field" id="cfg-max-days" placeholder="3" style="width: 100%;" />
               <div class="form-hint" style="font-size: 11px; color: #64748b; margin-top: 4px;">Ví dụ: 3 tức là chỉ lấy các bài đăng trong vòng 3 ngày gần nhất.</div>
             </div>
+
+            <div class="form-group">
+              <label class="form-label" style="font-weight: 600; font-size: 13px;">Chế độ kiểm duyệt nội dung</label>
+              <select class="select-field" id="cfg-moderation-mode" style="width: 100%;">
+                <option value="manual">Duyệt thủ công</option>
+                <option value="auto">Tự động duyệt</option>
+              </select>
+              <div class="form-hint" style="font-size: 11px; color: #64748b; margin-top: 4px;">Manual sẽ đưa job mới vào hàng đợi pending. Auto sẽ duyệt ngay nhưng vẫn ghi nhận chỉnh sửa để bot học.</div>
+            </div>
+
+            <label style="display:flex;align-items:center;gap:8px;font-size:12px;color:#475569;cursor:pointer;">
+              <input type="checkbox" id="cfg-learn-from-admin" checked />
+              Ghi nhận các lần admin chỉnh sửa để bot học
+            </label>
             
             <button class="btn-approve" onclick="saveBotConfig()" style="align-self: flex-start; padding: 10px 20px; font-size: 14px; font-weight: 600; border-radius: 6px;">Lưu Cấu Hình</button>
           </div>
@@ -205,6 +261,90 @@
               <div style="text-align: center; color: #64748b; padding: 20px; font-size: 12px;">Đang tải danh sách nhóm...</div>
             </div>
           </div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-header">
+          <div class="card-title">Cấu Hình TopCV</div>
+          <div class="card-subtitle">Thiết lập riêng cho TopCV, tách biệt hoàn toàn với các nguồn còn lại.</div>
+        </div>
+        <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:16px;align-items:end;">
+          <div class="form-group">
+            <label class="form-label" style="font-weight:600;font-size:13px;">Bật crawler TopCV</label>
+            <label style="display:flex;align-items:center;gap:8px;font-size:12px;color:#475569;cursor:pointer;">
+              <input type="checkbox" id="cfg-topcv-enabled" checked />
+              Active / Inactive
+            </label>
+          </div>
+          <div class="form-group">
+            <label class="form-label" style="font-weight:600;font-size:13px;">Số trang mặc định mỗi lần crawl</label>
+            <input type="number" class="input-field" id="cfg-topcv-max-pages" min="1" value="2" />
+          </div>
+          <div class="form-group">
+            <label class="form-label" style="font-weight:600;font-size:13px;">Headless</label>
+            <label style="display:flex;align-items:center;gap:8px;font-size:12px;color:#475569;cursor:pointer;">
+              <input type="checkbox" id="cfg-topcv-headless" checked />
+              Chạy ẩn trình duyệt
+            </label>
+          </div>
+          <button class="btn-approve" onclick="saveSourceConfig('topcv')" style="align-self:flex-start;padding:10px 20px;font-size:14px;font-weight:600;border-radius:6px;">Lưu TopCV</button>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-header">
+          <div class="card-title">Cấu Hình ITviec</div>
+          <div class="card-subtitle">Thiết lập riêng cho ITviec.</div>
+        </div>
+        <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:16px;align-items:end;">
+          <div class="form-group">
+            <label class="form-label" style="font-weight:600;font-size:13px;">Bật crawler ITviec</label>
+            <label style="display:flex;align-items:center;gap:8px;font-size:12px;color:#475569;cursor:pointer;">
+              <input type="checkbox" id="cfg-itviec-enabled" checked />
+              Active / Inactive
+            </label>
+          </div>
+          <div class="form-group">
+            <label class="form-label" style="font-weight:600;font-size:13px;">Số trang mặc định mỗi lần crawl</label>
+            <input type="number" class="input-field" id="cfg-itviec-max-pages" min="1" value="1" />
+          </div>
+          <div class="form-group">
+            <label class="form-label" style="font-weight:600;font-size:13px;">Headless</label>
+            <label style="display:flex;align-items:center;gap:8px;font-size:12px;color:#475569;cursor:pointer;">
+              <input type="checkbox" id="cfg-itviec-headless" checked />
+              Chạy ẩn trình duyệt
+            </label>
+          </div>
+          <button class="btn-approve" onclick="saveSourceConfig('itviec')" style="align-self:flex-start;padding:10px 20px;font-size:14px;font-weight:600;border-radius:6px;">Lưu ITviec</button>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-header">
+          <div class="card-title">Cấu Hình VietnamWorks</div>
+          <div class="card-subtitle">Thiết lập riêng cho VietnamWorks.</div>
+        </div>
+        <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:16px;align-items:end;">
+          <div class="form-group">
+            <label class="form-label" style="font-weight:600;font-size:13px;">Bật crawler VietnamWorks</label>
+            <label style="display:flex;align-items:center;gap:8px;font-size:12px;color:#475569;cursor:pointer;">
+              <input type="checkbox" id="cfg-vietnamworks-enabled" checked />
+              Active / Inactive
+            </label>
+          </div>
+          <div class="form-group">
+            <label class="form-label" style="font-weight:600;font-size:13px;">Số trang mặc định mỗi lần crawl</label>
+            <input type="number" class="input-field" id="cfg-vietnamworks-max-pages" min="1" value="2" />
+          </div>
+          <div class="form-group">
+            <label class="form-label" style="font-weight:600;font-size:13px;">Headless</label>
+            <label style="display:flex;align-items:center;gap:8px;font-size:12px;color:#475569;cursor:pointer;">
+              <input type="checkbox" id="cfg-vietnamworks-headless" checked />
+              Chạy ẩn trình duyệt
+            </label>
+          </div>
+          <button class="btn-approve" onclick="saveSourceConfig('vietnamworks')" style="align-self:flex-start;padding:10px 20px;font-size:14px;font-weight:600;border-radius:6px;">Lưu VietnamWorks</button>
         </div>
       </div>
 
@@ -396,6 +536,9 @@
             <span id="modal-source-badge" class="source-badge">—</span>
             <span id="modal-crawled-at">Crawled: —</span>
           </div>
+          <div style="margin-top:10px; font-size:12px; color:#64748b; word-break: break-all;">
+            Nguồn: <a id="modal-source-url" href="#" target="_blank" style="color:#3b82f6; text-decoration:none;">—</a>
+          </div>
         </div>
         <!-- Right: AI fields form -->
         <div class="modal-right">
@@ -407,6 +550,10 @@
           <div class="form-group">
             <label class="form-label">Tiêu đề công việc</label>
             <input type="text" class="input-field" id="field-title" placeholder="Job title..." />
+          </div>
+          <div class="form-group">
+            <label class="form-label">Tên công ty</label>
+            <input type="text" class="input-field" id="field-company" placeholder="Tên công ty..." />
           </div>
           <div class="form-row">
             <div class="form-group">

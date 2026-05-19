@@ -55,21 +55,40 @@ def _setup_logger() -> logging.Logger:
 
 logger = _setup_logger()
 
+
 # ================================================================
 # CONFIG
 # ================================================================
 # Config from bot_config.json instead of hardcoded
 def load_bot_config():
+    config_path = os.path.join(
+        os.path.dirname(os.path.dirname(__file__)), "data", "bot_config.json"
+    )
     try:
-        with open("data/bot_config.json", "r", encoding="utf-8") as f:
-            return json.load(f)
+        with open(config_path, "r", encoding="utf-8") as f:
+            raw_config = json.load(f)
+            config = (
+                raw_config.get("facebook")
+                if isinstance(raw_config.get("facebook"), dict)
+                else raw_config
+            )
+            policy = config.get("moderation_policy") or {}
+            mode = str(policy.get("mode", "manual")).lower()
+            policy["mode"] = mode if mode in ("auto", "manual") else "manual"
+            policy["learn_from_admin"] = bool(policy.get("learn_from_admin", True))
+            config["moderation_policy"] = policy
+            return config
     except Exception as e:
         logger.warning(f"Không thể đọc bot_config.json, sử dụng mặc định: {e}")
         return {
             "max_posts_per_group": 5,
             "max_groups_per_session": 1,
             "max_days_old": 3,
-            "facebook_groups": []
+            "facebook_groups": [],
+            "moderation_policy": {
+                "mode": "manual",
+                "learn_from_admin": True,
+            },
         }
 
 
@@ -212,8 +231,16 @@ class FacebookCrawler:
         hours_lookback: int = 24,
     ):
         config = load_bot_config()
-        self.max_posts = max_posts_per_group if max_posts_per_group is not None else config.get("max_posts_per_group", 5)
-        self.max_groups = max_groups_per_session if max_groups_per_session is not None else config.get("max_groups_per_session", 3)
+        self.max_posts = (
+            max_posts_per_group
+            if max_posts_per_group is not None
+            else config.get("max_posts_per_group", 5)
+        )
+        self.max_groups = (
+            max_groups_per_session
+            if max_groups_per_session is not None
+            else config.get("max_groups_per_session", 3)
+        )
         self.hours_lookback = hours_lookback
         self.max_days_old = config.get("max_days_old", 3)
         self.facebook_groups = config.get("facebook_groups", [])
@@ -247,6 +274,7 @@ class FacebookCrawler:
                 )
         except Exception as e:
             logger.warning(f"Failed to load verified entities: {e}")
+
     def _load_fingerprints_from_db(self):
         """Load fingerprints từ DB để DuplicateDetector nhớ bài cũ sau restart."""
         try:
@@ -461,10 +489,11 @@ class FacebookCrawler:
 
     def _is_port_open(self, port=9222) -> bool:
         import socket
+
         try:
             with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
                 s.settimeout(1.0)
-                return s.connect_ex(('127.0.0.1', port)) == 0
+                return s.connect_ex(("127.0.0.1", port)) == 0
         except Exception:
             return False
 
@@ -481,29 +510,33 @@ class FacebookCrawler:
             r"C:\Program Files\Google\Chrome\Application\chrome.exe",
             r"C:\Program Files (x86)\Google\Google Chrome\Application\chrome.exe",
             r"C:\Program Files (x86)\Google\Chrome\Application\chrome.exe",
-            os.path.expandvars(r"%LOCALAPPDATA%\Google\Chrome\Application\chrome.exe")
+            os.path.expandvars(r"%LOCALAPPDATA%\Google\Chrome\Application\chrome.exe"),
         ]
-        
+
         chrome_path = None
         for path in chrome_paths:
             if os.path.exists(path):
                 chrome_path = path
                 break
-                
+
         if not chrome_path:
-            logger.error("❌ Could not find Chrome executable automatically. Please open Chrome manually with port 9222.")
+            logger.error(
+                "❌ Could not find Chrome executable automatically. Please open Chrome manually with port 9222."
+            )
             return False
-            
-        logger.info(f"🚀 Launching Chrome at: {chrome_path} with debugging port 9222...")
+
+        logger.info(
+            f"🚀 Launching Chrome at: {chrome_path} with debugging port 9222..."
+        )
         user_data_dir = r"C:\ChromeProfile"
         os.makedirs(user_data_dir, exist_ok=True)
-        
+
         cmd = [
             chrome_path,
             "--remote-debugging-port=9222",
-            f"--user-data-dir={user_data_dir}"
+            f"--user-data-dir={user_data_dir}",
         ]
-        
+
         try:
             # Chạy Chrome độc lập dưới dạng Popen
             subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
@@ -677,7 +710,9 @@ class FacebookCrawler:
                 try:
                     article.wait_for(state="attached", timeout=1500)
                 except Exception:
-                    logger.debug(f"   ⚠️ Article #{i}: Element đã bị xóa/đổi bởi Facebook DOM, bỏ qua")
+                    logger.debug(
+                        f"   ⚠️ Article #{i}: Element đã bị xóa/đổi bởi Facebook DOM, bỏ qua"
+                    )
                     continue
 
                 # FIX: Click 'Xem thêm' ngay trong bài này trước khi đọc
@@ -771,7 +806,7 @@ class FacebookCrawler:
         bị ẩn bởi CSS 'Xem thêm' → giảm phụ thuộc vào việc click nút.
         """
         content = ""
-        
+
         # ── Ưu tiên 1: Lấy bằng Selector chính xác ──────────────────────
         for sel in CONTENT_SELECTORS:
             try:
@@ -804,13 +839,16 @@ class FacebookCrawler:
         # ── Ưu tiên 3: Fallback thủ công Playwright locator ──────────────
         if len(content) < 15:
             try:
-                els = article.locator("div[dir='auto'], span[dir='auto'], div[data-ad-comet-preview='message']")
+                els = article.locator(
+                    "div[dir='auto'], span[dir='auto'], div[data-ad-comet-preview='message']"
+                )
                 if els.count() > 0:
                     texts = []
                     for i in range(min(els.count(), 15)):
                         try:
                             t = els.nth(i).inner_text(timeout=1000).strip()
-                            if t: texts.append(t)
+                            if t:
+                                texts.append(t)
                         except Exception:
                             pass
                     if texts:
@@ -826,13 +864,17 @@ class FacebookCrawler:
                 raw_all_text = article.inner_text(timeout=2000).strip()
                 if len(raw_all_text) > len(content):
                     content = raw_all_text
-                    logger.debug(f"   [tc] Used raw article inner_text Fallback: {len(content)} chars")
+                    logger.debug(
+                        f"   [tc] Used raw article inner_text Fallback: {len(content)} chars"
+                    )
             except Exception as e:
                 logger.debug(f"   [tc] fallback 4 failed: {e}")
                 pass
 
         if not content or len(content) < 15:
-            logger.debug(f"   [tc] content empty or too short ({len(content)} chars), returning None")
+            logger.debug(
+                f"   [tc] content empty or too short ({len(content)} chars), returning None"
+            )
             return None
 
         # Post URL fallback
@@ -922,6 +964,44 @@ class FacebookCrawler:
                             break
                 except Exception:
                     continue
+
+        # Cách 3: Quét trực tiếp nội dung văn bản thô ở phần đầu của article (Miễn dịch hoàn toàn với thay đổi DOM/SVG của Facebook)
+        if not posted_time:
+            try:
+                import re
+
+                raw_all_text = article.inner_text(timeout=1000).strip()
+                if raw_all_text:
+                    lines = [
+                        line.strip()
+                        for line in raw_all_text.split("\n")
+                        if line.strip()
+                    ]
+                    time_patterns = [
+                        r"^\d+\s*(?:phút|giờ|ngày|tuần|tháng|năm|h|m|d|w|y|giờ|giơ|gi\u1edd|ph\u00fat)(?:\s*trước)?$",
+                        r"^(?:vừa\s*xong|hôm\s*qua|yesterday|just\s*now)$",
+                        r"^\d{1,2}\s+tháng\s+\d{1,2}(?:\s+lúc\s+\d{1,2}:\d{2})?$",
+                        r"^\d{1,2}\s+tháng\s+\d{1,2},\s+\d{4}(?:\s+lúc\s+\d{1,2}:\d{2})?$",
+                        r"^(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)\s+\d{1,2}(?:,\s*\d{4})?(?:\s+at\s+\d{1,2}:\d{2})?$",
+                        r"^\d+\s*(?:h|m|d|g|ph)\b",
+                    ]
+                    # Quét 10 dòng đầu tiên vì thông tin thời gian luôn nằm ở tiêu đề bài viết
+                    for line in lines[:10]:
+                        if line in ["·", "•", "-", "–"]:
+                            continue
+                        matched = False
+                        for pat in time_patterns:
+                            if re.search(pat, line, re.IGNORECASE):
+                                posted_time = line
+                                logger.info(
+                                    f"   [time] Tìm thấy thời gian đăng bài từ text thô: {posted_time!r}"
+                                )
+                                matched = True
+                                break
+                        if matched:
+                            break
+            except Exception as e:
+                logger.debug(f"   [time] Quét text thô thất bại: {e}")
 
         return {
             "content": content,
@@ -1049,9 +1129,11 @@ class FacebookCrawler:
         job.title = self.cleaner.extract_title(content)
         job.description = self.cleaner._clean_text(content)
         job.contact_phone = self.cleaner.extract_phone(content)
-        
+
         author = post.get("author", "").strip()
-        extracted_company = self.cleaner.extract_company(content, getattr(self, "verified_entities", None))
+        extracted_company = self.cleaner.extract_company(
+            content, getattr(self, "verified_entities", None)
+        )
         if author:
             if extracted_company:
                 job.company = f"{author} ({extracted_company})"
@@ -1092,6 +1174,44 @@ class FacebookCrawler:
             return ""
 
         now = datetime.now()
+        raw_clean = raw.strip()
+
+        # 0. Dạng: "Vừa xong" / "just now"
+        if re.search(r"(?:vừa\s*xong|just\s*now)", raw_clean, re.IGNORECASE):
+            return now.strftime("%Y-%m-%d %H:%M:%S")
+
+        # 0b. Dạng: "Hôm qua lúc 14:30" / "Hôm qua" / "Yesterday"
+        m_yest = re.search(
+            r"(?:hôm\s*qua|yesterday)(?:\s+l[u\xfa]c\s+(\d{1,2})[h:](\d{2}))?",
+            raw_clean,
+            re.IGNORECASE,
+        )
+        if m_yest:
+            dt = now - timedelta(days=1)
+            hour = int(m_yest.group(1)) if m_yest.group(1) else 12
+            minute = int(m_yest.group(2)) if m_yest.group(2) else 0
+            dt = dt.replace(hour=hour, minute=minute, second=0, microsecond=0)
+            return dt.strftime("%Y-%m-%d %H:%M:%S")
+
+        # 0c. Dạng: "19 tháng 5 lúc 12:00" hoặc "19 tháng 5"
+        m_vn = re.search(
+            r"(\d{1,2})\s+th[áa]ng\s+(\d{1,2})(?:\s+l[u\xfa]c\s+(\d{1,2})[h:](\d{2}))?",
+            raw_clean,
+            re.IGNORECASE,
+        )
+        if m_vn:
+            day = int(m_vn.group(1))
+            month = int(m_vn.group(2))
+            year = now.year
+            if month > now.month or (month == now.month and day > now.day):
+                year -= 1
+            hour = int(m_vn.group(3)) if m_vn.group(3) else 12
+            minute = int(m_vn.group(4)) if m_vn.group(4) else 0
+            try:
+                dt = datetime(year, month, day, hour, minute)
+                return dt.strftime("%Y-%m-%d %H:%M:%S")
+            except Exception:
+                pass
 
         # Dạng: "X phút" / "X phút trước" / "X m" / "Xm"
         m = re.search(r"(\d+)\s*(?:ph[u\xfa]t|m\b|min\b)", raw, re.IGNORECASE)
@@ -1187,7 +1307,9 @@ class FacebookCrawler:
         high = [g for g in self.facebook_groups if g.get("priority") == "high"]
         medium = [g for g in self.facebook_groups if g.get("priority") == "medium"]
         low = [
-            g for g in self.facebook_groups if g.get("priority") not in ("high", "medium")
+            g
+            for g in self.facebook_groups
+            if g.get("priority") not in ("high", "medium")
         ]
         random.shuffle(high)
         random.shuffle(medium)
