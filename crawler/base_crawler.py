@@ -42,7 +42,7 @@ class BaseCrawler:
     - Context manager support
     """
 
-    def __init__(self, headless: bool = True, max_pages: int = 5, use_cdp: bool = False, cdp_url: str = "http://localhost:9222"):
+    def __init__(self, headless: bool = True, max_pages: int = 5, use_cdp: bool = True, cdp_url: str = "http://localhost:9222"):
         self.headless = headless
         self.max_pages = max_pages
         self.use_cdp = use_cdp
@@ -51,6 +51,68 @@ class BaseCrawler:
         self.browser: Browser = None
         self.context: BrowserContext = None
         self.page: Page = None
+
+    def _is_port_open(self, port=9222) -> bool:
+        import socket
+        try:
+            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+                s.settimeout(1.0)
+                return s.connect_ex(("127.0.0.1", port)) == 0
+        except Exception:
+            return False
+
+    def _auto_launch_chrome(self) -> bool:
+        if self._is_port_open(9222):
+            logger.info("✅ Chrome is already running on port 9222")
+            return True
+
+        import os
+        import subprocess
+        import time
+
+        chrome_paths = [
+            r"C:\Program Files\Google\Chrome\Application\chrome.exe",
+            r"C:\Program Files (x86)\Google\Google Chrome\Application\chrome.exe",
+            r"C:\Program Files (x86)\Google\Chrome\Application\chrome.exe",
+            os.path.expandvars(r"%LOCALAPPDATA%\Google\Chrome\Application\chrome.exe"),
+        ]
+
+        chrome_path = None
+        for path in chrome_paths:
+            if os.path.exists(path):
+                chrome_path = path
+                break
+
+        if not chrome_path:
+            logger.error(
+                "❌ Could not find Chrome executable automatically. Please open Chrome manually with port 9222."
+            )
+            return False
+
+        logger.info(
+            f"🚀 Launching Chrome at: {chrome_path} with debugging port 9222..."
+        )
+        user_data_dir = r"C:\ChromeProfile"
+        os.makedirs(user_data_dir, exist_ok=True)
+
+        cmd = [
+            chrome_path,
+            "--remote-debugging-port=9222",
+            f"--user-data-dir={user_data_dir}",
+        ]
+
+        try:
+            subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            for _ in range(8):
+                time.sleep(0.5)
+                if self._is_port_open(9222):
+                    logger.info("✅ Chrome launched and listening on port 9222")
+                    return True
+            logger.warning("⚠️ Chrome launched but port 9222 is not responsive yet.")
+            return True
+        except Exception as e:
+            logger.error(f"❌ Failed to auto-launch Chrome: {e}")
+            return False
 
     # ================================================================
     # KHỞI TẠO & DỪNG (Context Manager)
@@ -62,6 +124,7 @@ class BaseCrawler:
         self.playwright = sync_playwright().start()
 
         if self.use_cdp:
+            self._auto_launch_chrome()
             try:
                 logger.info(f"🔗 Đang thử kết nối CDP: {self.cdp_url}...")
                 self.browser = self.playwright.chromium.connect_over_cdp(self.cdp_url)

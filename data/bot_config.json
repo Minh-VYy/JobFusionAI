@@ -2,9 +2,8 @@
   "facebook": {
     "enabled": true,
     "max_posts_per_group": 5,
-    "max_groups_per_session": 1,
+    "max_groups_per_session": 3,
     "max_days_old": 3,
-    "group_selection_mode": "priority",
     "facebook_groups": [
       {
         "name": "VIỆC LÀM THỜI VỤ ĐÀ NẴNG GROUP",
@@ -44,23 +43,28 @@
       }
     ],
     "moderation_policy": {
-      "mode": "manual",
-      "learn_from_admin": true
-    }
+      "mode": "auto",
+      "learn_from_admin": true,
+      "auto_approve_after_hours": 1
+    },
+    "group_selection_mode": "priority"
   },
   "topcv": {
     "enabled": true,
     "max_pages": 2,
-    "headless": true
+    "max_jobs": 100,
+    "headless": false
   },
   "itviec": {
     "enabled": true,
     "max_pages": 1,
+    "max_jobs": 10,
     "headless": true
   },
   "vietnamworks": {
     "enabled": true,
     "max_pages": 2,
+    "max_jobs": 10,
     "headless": true
   }
 }

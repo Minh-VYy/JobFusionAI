@@ -20,7 +20,7 @@ BASE_DIR = Path(__file__).resolve().parent
 # Lưu ý: dấu \ viết thành %5C trong URL, hoặc dùng ODBC_CONNECTION_STRING
 DATABASE_URL = os.getenv(
     "DATABASE_URL",
-    "mssql+pyodbc://quang123:123@THIEUQUANG/findJob"
+    "mssql+pyodbc://sa:123456@MVY_350/findJob"
     "?driver=ODBC+Driver+17+for+SQL+Server&TrustServerCertificate=yes"
 )
 
