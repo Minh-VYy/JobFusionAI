@@ -623,33 +623,57 @@ def get_map_jobs(radius_km: float = 10.0, user_lat: Optional[float] = None, user
         markers = []
 
         for j in jobs:
-            # Tạo tọa độ Đà Nẵng fallback ngẫu nhiên nhỏ nếu thiếu tọa độ
-            lat = j.latitude if j.latitude is not None else 16.0544
-            lng = j.longitude if j.longitude is not None else 108.2022
+            if j.locations:
+                for loc in j.locations:
+                    lat = loc.latitude if loc.latitude is not None else 16.0544
+                    lng = loc.longitude if loc.longitude is not None else 108.2022
 
-            # Tính khoảng cách đơn giản (Haversine approximation)
-            distance = 0.0
-            if user_lat is not None and user_lng is not None:
-                # Math approx: 1 degree lat = 111km, 1 degree lng = 111 * cos(lat)
-                dx = (lng - user_lng) * 111.0 * 0.96 # Cos Đà Nẵngapprox
-                dy = (lat - user_lat) * 111.0
-                distance = round((dx**2 + dy**2)**0.5, 2)
-                if distance > radius_km:
-                    continue
+                    distance = 0.0
+                    if user_lat is not None and user_lng is not None:
+                        dx = (lng - user_lng) * 111.0 * 0.96
+                        dy = (lat - user_lat) * 111.0
+                        distance = round((dx**2 + dy**2)**0.5, 2)
+                        if distance > radius_km:
+                            continue
 
-            markers.append({
-                "id": j.id,
-                "title": j.title,
-                "company": j.company or "N/A",
-                "address": j.address_clean or j.address_raw or "Đà Nẵng",
-                "salary": j.salary_raw or "Thỏa thuận",
-                "lat": lat,
-                "lng": lng,
-                "url": j.source_url,
-                "source": j.source_name,
-                "skills": j.skills or [],
-                "distance_km": distance if user_lat is not None else None
-            })
+                    markers.append({
+                        "id": j.id,
+                        "title": j.title,
+                        "company": j.company or "N/A",
+                        "address": loc.address_text or "Đà Nẵng",
+                        "salary": j.salary_raw or "Thỏa thuận",
+                        "lat": lat,
+                        "lng": lng,
+                        "url": j.source_url,
+                        "source": j.source_name,
+                        "skills": j.skills or [],
+                        "distance_km": distance if user_lat is not None else None
+                    })
+            else:
+                lat = j.latitude if j.latitude is not None else 16.0544
+                lng = j.longitude if j.longitude is not None else 108.2022
+
+                distance = 0.0
+                if user_lat is not None and user_lng is not None:
+                    dx = (lng - user_lng) * 111.0 * 0.96
+                    dy = (lat - user_lat) * 111.0
+                    distance = round((dx**2 + dy**2)**0.5, 2)
+                    if distance > radius_km:
+                        continue
+
+                markers.append({
+                    "id": j.id,
+                    "title": j.title,
+                    "company": j.company or "N/A",
+                    "address": j.address_clean or j.address_raw or "Đà Nẵng",
+                    "salary": j.salary_raw or "Thỏa thuận",
+                    "lat": lat,
+                    "lng": lng,
+                    "url": j.source_url,
+                    "source": j.source_name,
+                    "skills": j.skills or [],
+                    "distance_km": distance if user_lat is not None else None
+                })
 
         return {"markers": markers}
     finally:
@@ -703,7 +727,16 @@ def search_jobs(q: JobSearchQuery):
                 "source_name": j.source_name,
                 "source_url": j.source_url,
                 "skills": j.skills or [],
-                "distance_km": distance
+                "distance_km": distance,
+                "locations": [
+                    {
+                        "id": loc.id,
+                        "address_text": loc.address_text,
+                        "latitude": loc.latitude,
+                        "longitude": loc.longitude,
+                        "geocoding_confidence": loc.geocoding_confidence
+                    } for loc in j.locations
+                ] if j.locations else []
             })
 
         # Sắp xếp theo khoảng cách nếu có vị trí

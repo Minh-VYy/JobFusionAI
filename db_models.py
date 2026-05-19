@@ -105,6 +105,7 @@ class Job(Base):
 
     # Relationships
     user_interactions = relationship("UserInteraction", back_populates="job", cascade="all, delete-orphan")
+    locations         = relationship("JobLocation", back_populates="job", cascade="all, delete-orphan")
 
     def to_dict(self):
         return {
@@ -126,7 +127,32 @@ class Job(Base):
             "posted_date":  self.posted_date.isoformat() if self.posted_date else None,
             "scraped_at":   self.scraped_at.isoformat() if self.scraped_at else None,
             "geocoding_confidence": self.geocoding_confidence,
+            "locations":    [
+                {
+                    "id": loc.id,
+                    "address_text": loc.address_text,
+                    "latitude": loc.latitude,
+                    "longitude": loc.longitude,
+                    "geocoding_confidence": loc.geocoding_confidence
+                } for loc in self.locations
+            ] if self.locations else []
         }
+
+
+# ── Job Location Model ────────────────────────────────────────────────────────
+class JobLocation(Base):
+    """Bảng lưu trữ nhiều địa điểm làm việc chi tiết cho một job."""
+    __tablename__ = "job_locations"
+
+    id                      = Column(Integer, primary_key=True, autoincrement=True)
+    job_id                  = Column(Integer, ForeignKey("jobs.id", ondelete="CASCADE"), nullable=False)
+    address_text            = Column(NVARCHAR(500), nullable=False)
+    latitude                = Column(Float, nullable=True)
+    longitude               = Column(Float, nullable=True)
+    geocoding_confidence    = Column(Float, default=0.0)
+
+    # Relationships
+    job = relationship("Job", back_populates="locations")
 
 
 # ── Scrape Task Model ─────────────────────────────────────────────────────────
