@@ -19,10 +19,12 @@ class VietnamWorksCrawler(BaseCrawler):
         self.max_pages = max_pages
         self.jobs = []
 
-    def crawl(self) -> list[JobModel]:
+    def crawl(self, progress_callback=None) -> list[JobModel]:
         self.start()
         try:
             for page_num in range(1, self.max_pages + 1):
+                if progress_callback:
+                    progress_callback(page_num, self.max_pages, len(self.jobs))
                 logger.info(
                     f"📄 VietnamWorks - Crawl trang {page_num}/{self.max_pages}"
                 )

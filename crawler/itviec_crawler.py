@@ -24,10 +24,12 @@ class ITviecCrawler(BaseCrawler):
     # CRAWL CHÍNH
     # ============================================================
 
-    def crawl(self) -> list[JobModel]:
+    def crawl(self, progress_callback=None) -> list[JobModel]:
         self.start()
         try:
             for page_num in range(1, self.max_pages + 1):
+                if progress_callback:
+                    progress_callback(page_num, self.max_pages, len(self.jobs))
                 logger.info(f"📄 ITviec - Trang {page_num}/{self.max_pages}")
                 url = f"{self.BASE_URL}?page={page_num}"
                 if not self.goto(url):

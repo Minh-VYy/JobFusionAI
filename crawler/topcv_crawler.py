@@ -30,11 +30,13 @@ class TopCVCrawler(BaseCrawler):
 
     # ==================== CRAWL DANH SÁCH ====================
 
-    def crawl(self) -> list[JobModel]:
+    def crawl(self, progress_callback=None) -> list[JobModel]:
         """Entry point — crawl toàn bộ"""
         self.start()
         try:
             for page_num in range(1, self.max_pages + 1):
+                if progress_callback:
+                    progress_callback(page_num, self.max_pages, len(self.jobs))
                 url = f"{self.BASE_URL}?page={page_num}"
                 logger.info(f"📄 Crawl trang {page_num}/{self.max_pages}")
 

@@ -58,62 +58,20 @@ logger = _setup_logger()
 # ================================================================
 # CONFIG
 # ================================================================
-FACEBOOK_GROUPS = [
-    {
-        "name": "VIỆC LÀM THỜI VỤ ĐÀ NẴNG GROUP",
-        "url": "https://www.facebook.com/groups/358744117181132",
-        "trust_score": 0.85,
-        "priority": "high",
-    },
-    {
-        "name": "Tìm kiếm việc làm tại Đà Nẵng",
-        "url": "https://www.facebook.com/groups/422673553710542",
-        "trust_score": 0.80,
-        "priority": "high",
-    },
-    {
-        "name": "VIỆC LÀM PHỤC VỤ PHA CHẾ ĐÀ NẴNG",
-        "url": "https://www.facebook.com/groups/363005460084694",
-        "trust_score": 0.90,
-        "priority": "high",
-    },
-    {
-        "name": "Việc làm Đà Nẵng full/part-time SV",
-        "url": "https://www.facebook.com/groups/360683986995278",
-        "trust_score": 0.80,
-        "priority": "medium",
-    },
-    {
-        "name": "Hội Tìm Việc Làm Thêm SV Đà Nẵng",
-        "url": "https://www.facebook.com/groups/360978689839999",
-        "trust_score": 0.75,
-        "priority": "medium",
-    },
-    {
-        "name": "Hội Việc Làm Đà Nẵng - Viec Lam Da Nang",
-        "url": "https://www.facebook.com/groups/471999991646484",
-        "trust_score": 0.85,
-        "priority": "high",
-    },
-    {
-        "name": "VIỆC LÀM - ĐÀ NẴNG",
-        "url": "https://www.facebook.com/groups/444340500105671",
-        "trust_score": 0.90,
-        "priority": "high",
-    },
-    {
-        "name": "Việc Làm Đà Nẵng",
-        "url": "https://www.facebook.com/groups/sieuthiphuyen78",
-        "trust_score": 0.80,
-        "priority": "high",
-    },
-    {
-        "name": "Hội Tìm Việc Làm Thêm Cho SV Đà Nẵng",
-        "url": "https://www.facebook.com/groups/thichlamthemcom",
-        "trust_score": 0.80,
-        "priority": "medium",
-    },
-]
+# Config from bot_config.json instead of hardcoded
+def load_bot_config():
+    try:
+        with open("data/bot_config.json", "r", encoding="utf-8") as f:
+            return json.load(f)
+    except Exception as e:
+        logger.warning(f"Không thể đọc bot_config.json, sử dụng mặc định: {e}")
+        return {
+            "max_posts_per_group": 5,
+            "max_groups_per_session": 1,
+            "max_days_old": 3,
+            "facebook_groups": []
+        }
+
 
 # Selector fallback system — thử theo thứ tự
 ARTICLE_SELECTORS = [
@@ -249,13 +207,16 @@ class FacebookCrawler:
 
     def __init__(
         self,
-        max_posts_per_group: int = 5,
-        max_groups_per_session: int = 1,
+        max_posts_per_group: int = None,
+        max_groups_per_session: int = None,
         hours_lookback: int = 24,
     ):
-        self.max_posts = max_posts_per_group
-        self.max_groups = max_groups_per_session
+        config = load_bot_config()
+        self.max_posts = max_posts_per_group if max_posts_per_group is not None else config.get("max_posts_per_group", 5)
+        self.max_groups = max_groups_per_session if max_groups_per_session is not None else config.get("max_groups_per_session", 3)
         self.hours_lookback = hours_lookback
+        self.max_days_old = config.get("max_days_old", 3)
+        self.facebook_groups = config.get("facebook_groups", [])
 
         self.cleaner = FacebookCleaner()
         self.nlp = FacebookNLP()
@@ -315,9 +276,9 @@ class FacebookCrawler:
     # MAIN PIPELINE
     # ============================================================
 
-    def crawl_and_save(self) -> dict:
+    def crawl_and_save(self, progress_callback=None) -> dict:
         """Pipeline hoàn chỉnh: Crawl → NLP Spam → Duplicate → DB → Trust Score."""
-        raw_jobs = self.crawl()
+        raw_jobs = self.crawl(progress_callback=progress_callback)
         if not raw_jobs:
             return {
                 "total": 0,
@@ -498,8 +459,69 @@ class FacebookCrawler:
         )
         return stats
 
-    def crawl(self) -> List[JobModel]:
+    def _is_port_open(self, port=9222) -> bool:
+        import socket
+        try:
+            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+                s.settimeout(1.0)
+                return s.connect_ex(('127.0.0.1', port)) == 0
+        except Exception:
+            return False
+
+    def _auto_launch_chrome(self) -> bool:
+        if self._is_port_open(9222):
+            logger.info("✅ Chrome is already running on port 9222")
+            return True
+
+        import os
+        import subprocess
+        import time
+
+        chrome_paths = [
+            r"C:\Program Files\Google\Chrome\Application\chrome.exe",
+            r"C:\Program Files (x86)\Google\Google Chrome\Application\chrome.exe",
+            r"C:\Program Files (x86)\Google\Chrome\Application\chrome.exe",
+            os.path.expandvars(r"%LOCALAPPDATA%\Google\Chrome\Application\chrome.exe")
+        ]
+        
+        chrome_path = None
+        for path in chrome_paths:
+            if os.path.exists(path):
+                chrome_path = path
+                break
+                
+        if not chrome_path:
+            logger.error("❌ Could not find Chrome executable automatically. Please open Chrome manually with port 9222.")
+            return False
+            
+        logger.info(f"🚀 Launching Chrome at: {chrome_path} with debugging port 9222...")
+        user_data_dir = r"C:\ChromeProfile"
+        os.makedirs(user_data_dir, exist_ok=True)
+        
+        cmd = [
+            chrome_path,
+            "--remote-debugging-port=9222",
+            f"--user-data-dir={user_data_dir}"
+        ]
+        
+        try:
+            # Chạy Chrome độc lập dưới dạng Popen
+            subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            # Chờ 4 giây để Chrome khởi chạy và mở cổng
+            for _ in range(8):
+                time.sleep(0.5)
+                if self._is_port_open(9222):
+                    logger.info("✅ Chrome launched and listening on port 9222")
+                    return True
+            logger.warning("⚠️ Chrome launched but port 9222 is not responsive yet.")
+            return True
+        except Exception as e:
+            logger.error(f"❌ Failed to auto-launch Chrome: {e}")
+            return False
+
+    def crawl(self, progress_callback=None) -> List[JobModel]:
         """Attach Chrome qua CDP, crawl các groups đã chọn."""
+        self._auto_launch_chrome()
         with sync_playwright() as pw:
             try:
                 browser = pw.chromium.connect_over_cdp("http://localhost:9222")
@@ -507,7 +529,7 @@ class FacebookCrawler:
             except Exception as e:
                 logger.error(f"❌ Cannot connect to Chrome: {e}")
                 logger.info(
-                    "💡 Run: chrome.exe --remote-debugging-port=9222 --user-data-dir=..."
+                    "💡 Run: chrome.exe --remote-debugging-port=9222 --user-data-dir=C:\\ChromeProfile"
                 )
                 return []
 
@@ -518,7 +540,9 @@ class FacebookCrawler:
             selected = self._select_groups()
             logger.info(f"📋 Session: {len(selected)} groups")
 
-            for group in selected:
+            for idx, group in enumerate(selected, 1):
+                if progress_callback:
+                    progress_callback(idx, len(selected), len(self.jobs))
                 try:
                     group_jobs = self._crawl_single_group(page, group)
                     self.jobs.extend(group_jobs)
@@ -590,7 +614,7 @@ class FacebookCrawler:
                 try:
                     post_dt = datetime.strptime(job.posted_date, "%Y-%m-%d %H:%M:%S")
                     old_days = (datetime.now() - post_dt).days
-                    if old_days > 3:
+                    if old_days > self.max_days_old:
                         logger.debug(f"   ⏭ Skip bài đăng cũ ({old_days} ngày trước)")
                         is_too_old = True
                 except Exception:
@@ -828,17 +852,38 @@ class FacebookCrawler:
             except Exception:
                 continue
 
-        # Author fallback
+        # Author fallback - Lọc bỏ link nhóm hoặc bài viết để lấy đúng tên người đăng
         author = ""
         for sel in AUTHOR_SELECTORS:
             try:
-                el = article.locator(sel).first
-                if el.count() > 0:
-                    author = el.inner_text(timeout=1000).strip()
-                    if author:
-                        break
+                els = article.locator(sel)
+                count = els.count()
+                for j in range(count):
+                    el = els.nth(j)
+                    href = el.get_attribute("href") or ""
+                    # Link của người đăng bài không bao giờ chứa "/groups/" hoặc "/permalink/"
+                    if href and "/groups/" not in href and "/permalink/" not in href:
+                        text = el.inner_text().strip()
+                        if text and 2 < len(text) < 50:
+                            author = text
+                            break
+                if author:
+                    break
             except Exception:
                 continue
+
+        # Fallback cuối cùng nếu vẫn trống
+        if not author:
+            for sel in AUTHOR_SELECTORS:
+                try:
+                    el = article.locator(sel).first
+                    if el.count() > 0:
+                        text = el.inner_text().strip()
+                        if text and len(text) < 50:
+                            author = text
+                            break
+                except Exception:
+                    continue
 
         # Time — ưu tiên lấy aria-label của <abbr> chứa thời gian thực
         posted_time = ""
@@ -1004,9 +1049,16 @@ class FacebookCrawler:
         job.title = self.cleaner.extract_title(content)
         job.description = self.cleaner._clean_text(content)
         job.contact_phone = self.cleaner.extract_phone(content)
-        job.company = self.cleaner.extract_company(
-            content, getattr(self, "verified_entities", None)
-        )
+        
+        author = post.get("author", "").strip()
+        extracted_company = self.cleaner.extract_company(content, getattr(self, "verified_entities", None))
+        if author:
+            if extracted_company:
+                job.company = f"{author} ({extracted_company})"
+            else:
+                job.company = author
+        else:
+            job.company = extracted_company or "Facebook Recruiter"
         job.salary = self.cleaner.extract_salary(content)
         job.location = self.cleaner.extract_location(content)
         job.skills = self.cleaner.extract_skills(content)
@@ -1041,20 +1093,20 @@ class FacebookCrawler:
 
         now = datetime.now()
 
-        # Dạng: "X phút" / "X phút trước"
-        m = re.search(r"(\d+)\s*ph[u\xfa]t", raw, re.IGNORECASE)
+        # Dạng: "X phút" / "X phút trước" / "X m" / "Xm"
+        m = re.search(r"(\d+)\s*(?:ph[u\xfa]t|m\b|min\b)", raw, re.IGNORECASE)
         if m:
             dt = now - timedelta(minutes=int(m.group(1)))
             return dt.strftime("%Y-%m-%d %H:%M:%S")
 
-        # Dạng: "X giờ" / "X giờ trước"
-        m = re.search(r"(\d+)\s*gi[o\u1edd]", raw, re.IGNORECASE)
+        # Dạng: "X giờ" / "X giờ trước" / "X h" / "Xh" / "Xg"
+        m = re.search(r"(\d+)\s*(?:gi[o\u1edd]|h\b|g\b)", raw, re.IGNORECASE)
         if m:
             dt = now - timedelta(hours=int(m.group(1)))
             return dt.strftime("%Y-%m-%d %H:%M:%S")
 
-        # Dạng: "X ngày" / "X ngày trước"
-        m = re.search(r"(\d+)\s*ng[a\xE0]y", raw, re.IGNORECASE)
+        # Dạng: "X ngày" / "X ngày trước" / "X d" / "Xd" / "X day"
+        m = re.search(r"(\d+)\s*(?:ng[a\xE0]y|d\b|day\b)", raw, re.IGNORECASE)
         if m:
             dt = now - timedelta(days=int(m.group(1)))
             return dt.strftime("%Y-%m-%d %H:%M:%S")
@@ -1132,10 +1184,10 @@ class FacebookCrawler:
 
     def _select_groups(self) -> List[dict]:
         """Chọn groups theo priority, shuffle trong từng mức."""
-        high = [g for g in FACEBOOK_GROUPS if g.get("priority") == "high"]
-        medium = [g for g in FACEBOOK_GROUPS if g.get("priority") == "medium"]
+        high = [g for g in self.facebook_groups if g.get("priority") == "high"]
+        medium = [g for g in self.facebook_groups if g.get("priority") == "medium"]
         low = [
-            g for g in FACEBOOK_GROUPS if g.get("priority") not in ("high", "medium")
+            g for g in self.facebook_groups if g.get("priority") not in ("high", "medium")
         ]
         random.shuffle(high)
         random.shuffle(medium)

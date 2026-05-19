@@ -33,15 +33,32 @@ class DataCleaner:
 
     # ==================== CÁC BƯỚC CLEAN ====================
 
+    def _extract_id_for_clean(self, url: str) -> str:
+        """Trích ID từ URL job để dùng cho deduplication"""
+        if not url:
+            return ""
+        matches = re.findall(r"\d{5,}", url)
+        if matches:
+            return matches[-1]
+        return url[-50:]
+
     def _drop_duplicates(self, df: pd.DataFrame) -> pd.DataFrame:
-        """Xóa job trùng lặp theo URL hoặc title+company"""
+        """Xóa job trùng lặp theo external_id, URL, hoặc title+company"""
         before = len(df)
 
-        # Ưu tiên dedup theo URL
+        # 1. Dedup theo (source, external_id) nếu có
+        if "job_url" in df.columns:
+            source_col = "source" if "source" in df.columns else ("source_name" if "source_name" in df.columns else None)
+            if source_col:
+                df["tmp_ext_id"] = df["job_url"].apply(self._extract_id_for_clean)
+                df = df.drop_duplicates(subset=[source_col, "tmp_ext_id"], keep="first")
+                df = df.drop(columns=["tmp_ext_id"])
+
+        # 2. Ưu tiên dedup theo URL
         if "job_url" in df.columns:
             df = df.drop_duplicates(subset=["job_url"], keep="first")
         
-        # Dedup theo title + company nếu không có URL
+        # 3. Dedup theo title + company
         df = df.drop_duplicates(subset=["title", "company"], keep="first")
 
         after = len(df)

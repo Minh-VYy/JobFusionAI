@@ -66,6 +66,7 @@ function switchTab(tabName) {
 function refreshCurrentTab() {
     if (currentTab === 'bots') {
         fetchTasks();
+        fetchBotConfig();
     } else if (currentTab === 'review') {
         loadReviewJobs();
     } else if (currentTab === 'analytics') {
@@ -108,57 +109,86 @@ function toast(message, type = 'info') {
 async function fetchTasks() {
     const tbody = document.getElementById('tasks-tbody');
     try {
-        // Mock data cho giao diện vì phía backend của bạn có thể chưa có api/tasks
-        const tasks = [
-            { id: 1, name: 'VietnamWorks Crawler', status: 'idle', count: 125, last_run: '10 phút trước', progress: 100 },
-            { id: 2, name: 'TopCV Crawler', status: 'running', count: 32, last_run: 'Vừa xong', progress: 45 },
-            { id: 3, name: 'ITViec Crawler', status: 'error', count: 0, last_run: '2 giờ trước', progress: 0 },
-            { id: 4, name: 'Facebook Crawler', status: 'idle', count: 8, last_run: '1 ngày trước', progress: 100 }
-        ];
+        const tasksRes = await apiFetch('/admin/tasks');
 
-        tbody.innerHTML = tasks.map(t => {
+        tbody.innerHTML = tasksRes.map(t => {
             const statusClass = t.status === 'running' ? 'status-pending' : (t.status === 'error' ? 'status-rejected' : 'status-approved');
+            // Assuming progress isn't sent by API, default to 100 or 0
+            const progress = t.status === 'running' ? 50 : 100;
             return `
             <tr>
                 <td><strong>${t.name}</strong></td>
                 <td><span class="status-badge ${statusClass}">${t.status.toUpperCase()}</span></td>
-                <td>${t.count} jobs</td>
-                <td>${t.last_run}</td>
+                <td>N/A jobs</td>
+                <td>${t.last_run_at || 'Chưa chạy'}</td>
                 <td>
                     <div style="width: 100px; height: 6px; background: #e2e8f0; border-radius: 3px; overflow: hidden; margin-top: 5px;">
-                        <div style="width: ${t.progress}%; height: 100%; background: ${t.status === 'running' ? '#3b82f6' : '#10b981'};"></div>
+                        <div style="width: ${progress}%; height: 100%; background: ${t.status === 'running' ? '#3b82f6' : '#10b981'};"></div>
                     </div>
                 </td>
                 <td>
-                    <button class="btn-approve" style="padding: 4px 8px; font-size: 12px; border: none; border-radius: 4px; cursor: pointer;" onclick="runBotNow('${t.name.split(' ')[0].toLowerCase()}')" ${t.status === 'running' ? 'disabled' : ''}>▶ Run</button>
+                    <button class="btn-approve" style="padding: 4px 8px; font-size: 12px; border: none; border-radius: 4px; cursor: pointer;" onclick="runBotNow(${t.id}, '${t.name}')" ${t.status === 'running' ? 'disabled' : ''}>▶ Run</button>
                 </td>
             </tr>
             `;
         }).join('');
 
-        document.getElementById('badge-running').textContent = tasks.filter(t => t.status === 'running').length;
+        document.getElementById('badge-running').textContent = tasksRes.filter(t => t.status === 'running').length;
+
+        // Đồng bộ hóa trạng thái Lịch Chạy trên UI
+        tasksRes.forEach(t => {
+            const source = t.source_name ? t.source_name.toLowerCase() : '';
+            if (source === 'facebook' || source === 'topcv') {
+                const selectId = source === 'facebook' ? 'schedule-fb' : 'schedule-topcv';
+                const toggleId = source === 'facebook' ? 'toggle-fb' : 'toggle-topcv';
+
+                const selectEl = document.getElementById(selectId);
+                const toggleEl = document.getElementById(toggleId);
+
+                if (selectEl && t.schedule_cron) {
+                    selectEl.value = t.schedule_cron;
+                }
+
+                if (toggleEl) {
+                    if (t.is_scheduled) {
+                        toggleEl.classList.add('active');
+                    } else {
+                        toggleEl.classList.remove('active');
+                    }
+                }
+            }
+        });
 
     } catch (e) {
         tbody.innerHTML = `<tr><td colspan="6" style="color:red">Lỗi tải tiến độ: ${e.message}</td></tr>`;
     }
 }
 
-async function runBotNow(botName) {
-    const btnId = `btn-${botName}`;
+async function runBotNow(taskId, botName) {
+    // Xác định ID nút và API endpoint phù hợp
+    let btnId = `btn-${taskId}`;
+    let apiPath = `/admin/tasks/${taskId}/run`;
+    let name = botName || taskId;
+
+    if (taskId === 'facebook' || taskId === 'topcv') {
+        btnId = taskId === 'facebook' ? 'btn-fb' : 'btn-topcv';
+        apiPath = `/admin/tasks/by-source/${taskId}/run`;
+        name = taskId === 'facebook' ? 'Facebook' : 'TopCV';
+    }
+
     const btn = document.getElementById(btnId);
-    if(btn) btn.classList.add('loading');
-    
-    toast(`Đang khởi động bot ${botName}...`, 'info');
-    
+    if (btn) btn.classList.add('loading');
+
+    toast(`Đang khởi động bot ${name}...`, 'info');
+
     try {
-        // Thực tế sẽ gọi API chạy script: await apiFetch(`/admin/bots/run`, { method: 'POST', body: JSON.stringify({ name: botName }) });
-        await new Promise(r => setTimeout(r, 1500)); // Simulate delay
-        toast(`Bot ${botName} đã được đưa vào hàng đợi chạy`, 'success');
+        await apiFetch(apiPath, { method: 'POST' });
+        toast(`Bot ${name} đã được khởi động thành công!`, 'success');
         fetchTasks();
     } catch (e) {
         toast(`Lỗi chạy bot: ${e.message}`, 'error');
     } finally {
-        if(btn) btn.classList.remove('loading');
+        if (btn) btn.classList.remove('loading');
     }
 }
 
@@ -168,20 +198,16 @@ async function runBotNow(botName) {
 async function loadReviewJobs() {
     const tbody = document.getElementById('jobs-tbody');
     tbody.innerHTML = '<tr><td colspan="8" class="table-loading"><div class="spinner"></div> Đang tải...</td></tr>';
-    
+
     try {
         // Thử fetch API thực. Nếu chưa có API, đây sẽ trả về data trống hoặc báo lỗi
         let data = [];
         try {
-            const res = await apiFetch('/admin/jobs/review'); // Endpoint từ yêu cầu cũ của bạn
+            const res = await apiFetch('/admin/jobs/review'); // Thực tế gọi API đã xây dựng sẵn
             data = res.jobs || res || [];
-        } catch(err) {
-            console.warn("API /admin/jobs/review chưa khả dụng, giả lập data...");
-            // Fake data fallback
-            data = [
-                { id: 101, title: 'Thực Tập Sinh IT', company: 'STARACK SG', salary_raw: 'Thỏa thuận', address_raw: 'Hồ Chí Minh', source_name: 'topcv', status: 'pending', created_at: new Date().toISOString() },
-                { id: 102, title: 'Senior Data Engineer', company: 'MB Bank', salary_raw: '25-40tr', address_raw: 'Hà Nội', source_name: 'itviec', status: 'pending', created_at: new Date().toISOString() },
-            ];
+        } catch (err) {
+            console.error("Lỗi khi tải jobs/review:", err);
+            data = [];
         }
 
         jobsData = data;
@@ -205,9 +231,9 @@ function filterJobs() {
     });
 
     renderJobsTable(filtered);
-    
+
     document.getElementById('filter-stats').textContent = `${filtered.length} bản ghi`;
-    
+
     // Update badge pending based on overall pending counts
     const pendingCount = jobsData.filter(j => j.status === 'pending').length;
     document.getElementById('badge-pending').textContent = pendingCount;
@@ -257,14 +283,14 @@ function openReviewModal(jobId) {
     document.getElementById('field-salary-min').value = job.salary_min || '';
     document.getElementById('field-salary-max').value = job.salary_max || '';
     document.getElementById('field-location').value = job.address_clean || job.address_raw || '';
-    
+
     // Skills (Array to string)
     let skillsStr = '';
-    if(Array.isArray(job.skills)) skillsStr = job.skills.join(', ');
-    else if(typeof job.skills === 'string') skillsStr = job.skills;
-    
+    if (Array.isArray(job.skills)) skillsStr = job.skills.join(', ');
+    else if (typeof job.skills === 'string') skillsStr = job.skills;
+
     document.getElementById('field-skills').value = skillsStr;
-    
+
     // Listen for changes to show "Diff" warning
     const inputs = document.querySelectorAll('.modal-right input, .modal-right select');
     inputs.forEach(el => {
@@ -272,7 +298,7 @@ function openReviewModal(jobId) {
             document.getElementById('diff-indicator').style.display = 'flex';
         };
     });
-    
+
     document.getElementById('diff-indicator').style.display = 'none';
     document.getElementById('reviewModal').classList.add('active');
 }
@@ -291,12 +317,12 @@ function closeModal(event) {
 async function reviewJob(action) {
     if (!currentReviewJob) return;
     const jobId = currentReviewJob.id;
-    
+
     // Update data locally based on action
     const btnId = action === 'approve' ? 'btn-approve' : 'btn-reject';
     const originalText = document.getElementById(btnId).innerHTML;
     document.getElementById(btnId).innerHTML = 'Đang xử lý...';
-    
+
     try {
         const payload = {
             status: action === 'approve' ? 'approved' : 'rejected',
@@ -310,7 +336,7 @@ async function reviewJob(action) {
         // Thực tế sẽ gọi API cập nhật trạng thái review:
         try {
             await apiFetch(`/admin/jobs/${jobId}/review`, { method: 'POST', body: JSON.stringify(payload) });
-        } catch(e) {
+        } catch (e) {
             console.warn("API chưa có, mock success");
         }
 
@@ -324,7 +350,7 @@ async function reviewJob(action) {
                 jobsData[idx].address_clean = payload.location_corrected;
             }
         }
-        
+
         toast(`Đã ${action === 'approve' ? 'duyệt' : 'loại bỏ'} báo cáo thành công!`, 'success');
         closeReviewModal();
         filterJobs();
@@ -339,29 +365,43 @@ async function reviewJob(action) {
 // =============================================
 // TAB 3: ANALYTICS
 // =============================================
-function loadAnalytics() {
-    // Generate some fake stats suitable for your App
-    document.getElementById('stat-jobs').textContent = '24,592';
-    document.getElementById('stat-users').textContent = '1,204';
-    document.getElementById('stat-apps').textContent = '350';
-    document.getElementById('stat-rating').textContent = '4.8';
+async function loadAnalytics() {
+    try {
+        const stats = await apiFetch('/admin/stats');
 
-    initCharts();
+        document.getElementById('stat-jobs').textContent = stats.system.total_jobs.toLocaleString('vi-VN');
+        document.getElementById('stat-users').textContent = stats.system.geocoded_jobs.toLocaleString('vi-VN'); // Using geocoded jobs as an example
+        document.getElementById('stat-apps').textContent = stats.system.pending_review.toLocaleString('vi-VN'); // Using pending jobs
+        document.getElementById('stat-rating').textContent = stats.system.geocoding_rate + '%';
+
+        const analytics = await apiFetch('/admin/analytics');
+        initCharts(analytics);
+    } catch (e) {
+        console.error("Lỗi tải Analytics:", e);
+    }
 }
 
-function initCharts() {
+function initCharts(analytics) {
     // Destroy old charts to prevent duplicate drawing
     Object.values(charts).forEach(c => c.destroy());
-    
+
     // 1. Pie Chart - Tỷ lệ Nguồn Jobs
     const ctxSource = document.getElementById('sourceChart').getContext('2d');
+
+    let sourceLabels = Object.keys(analytics.source_distribution || {});
+    let sourceData = Object.values(analytics.source_distribution || {});
+    if (sourceLabels.length === 0) {
+        sourceLabels = ['VietnamWorks', 'ITViec', 'TopCV', 'Facebook'];
+        sourceData = [45, 25, 20, 10];
+    }
+
     charts.source = new Chart(ctxSource, {
         type: 'doughnut',
         data: {
-            labels: ['VietnamWorks', 'ITViec', 'TopCV', 'Facebook'],
+            labels: sourceLabels,
             datasets: [{
-                data: [45, 25, 20, 10],
-                backgroundColor: ['#3b82f6', '#10b981', '#f59e0b', '#8b5cf6'],
+                data: sourceData,
+                backgroundColor: ['#3b82f6', '#10b981', '#f59e0b', '#8b5cf6', '#ef4444', '#64748b'],
                 borderWidth: 0,
             }]
         },
@@ -397,4 +437,168 @@ function initCharts() {
             }
         }
     });
+}
+
+// =============================================
+// SCHEDULING & CONFIGURATION FUNCTIONS
+// =============================================
+async function updateSchedule(source, value) {
+    toast(`Đang cập nhật lịch chạy cho bot ${source} thành ${value}...`, 'info');
+    try {
+        const toggleId = source === 'facebook' ? 'toggle-fb' : 'toggle-topcv';
+        const toggleEl = document.getElementById(toggleId);
+        const isScheduled = toggleEl ? toggleEl.classList.contains('active') : false;
+
+        await apiFetch(`/admin/tasks/by-source/${source}/schedule`, {
+            method: 'POST',
+            body: JSON.stringify({
+                is_scheduled: isScheduled,
+                schedule_cron: value
+            })
+        });
+        toast(`Đã lưu lịch chạy cho bot ${source}`, 'success');
+        fetchTasks();
+    } catch (e) {
+        toast(`Lỗi cập nhật lịch: ${e.message}`, 'error');
+    }
+}
+
+async function toggleSchedule(source, el) {
+    const isActive = el.classList.contains('active');
+
+    // Toggle class
+    if (isActive) {
+        el.classList.remove('active');
+    } else {
+        el.classList.add('active');
+    }
+
+    const selectId = source === 'facebook' ? 'schedule-fb' : 'schedule-topcv';
+    const selectEl = document.getElementById(selectId);
+    const cronValue = selectEl ? selectEl.value : '12:00';
+
+    toast(`Đang ${!isActive ? 'kích hoạt' : 'tắt'} lịch chạy cho bot ${source}...`, 'info');
+    try {
+        await apiFetch(`/admin/tasks/by-source/${source}/schedule`, {
+            method: 'POST',
+            body: JSON.stringify({
+                is_scheduled: !isActive,
+                schedule_cron: cronValue
+            })
+        });
+        toast(`Đã ${!isActive ? 'kích hoạt' : 'tắt'} lịch chạy cho bot ${source}`, 'success');
+        fetchTasks();
+    } catch (e) {
+        // Revert toggle on error
+        if (isActive) el.classList.add('active');
+        else el.classList.remove('active');
+        toast(`Lỗi thay đổi trạng thái lịch: ${e.message}`, 'error');
+    }
+}
+
+let currentBotConfig = {
+    max_posts_per_group: 5,
+    max_groups_per_session: 3,
+    max_days_old: 3,
+    facebook_groups: []
+};
+
+async function fetchBotConfig() {
+    try {
+        currentBotConfig = await apiFetch('/admin/bot-config');
+
+        // Điền dữ liệu vào form
+        document.getElementById('cfg-max-posts').value = currentBotConfig.max_posts_per_group || 5;
+        document.getElementById('cfg-max-groups').value = currentBotConfig.max_groups_per_session || 3;
+        document.getElementById('cfg-max-days').value = currentBotConfig.max_days_old || 3;
+
+        renderFacebookGroups();
+    } catch (e) {
+        toast(`Lỗi tải cấu hình bot: ${e.message}`, 'error');
+    }
+}
+
+function renderFacebookGroups() {
+    const container = document.getElementById('fb-groups-list-container');
+    if (!container) return;
+
+    const groups = currentBotConfig.facebook_groups || [];
+    if (groups.length === 0) {
+        container.innerHTML = `<div style="text-align: center; color: #64748b; padding: 20px; font-size: 12px; background: #f8fafc; border-radius: 6px; border: 1px dashed #cbd5e1;">Danh sách trống. Nhập ở trên để thêm nhóm mới.</div>`;
+        return;
+    }
+
+    container.innerHTML = groups.map((g, index) => {
+        return `
+        <div style="display: flex; justify-content: space-between; align-items: center; padding: 8px 12px; background: white; border: 1px solid #e2e8f0; border-radius: 6px; margin-bottom: 8px; box-shadow: 0 1px 2px 0 rgba(0, 0, 0, 0.05); gap: 12px;">
+            <div style="display: flex; flex-direction: column; overflow: hidden; flex: 1;">
+                <div style="font-size: 13px; font-weight: 600; color: #1e293b; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">${g.name}</div>
+                <a href="${g.url}" target="_blank" style="font-size: 11px; color: #3b82f6; text-decoration: none; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin-top: 2px;">${g.url}</a>
+            </div>
+            <button onclick="deleteGroup(${index})" style="background: #fef2f2; color: #ef4444; border: 1px solid #fee2e2; border-radius: 4px; padding: 4px 8px; font-size: 12px; font-weight: 600; cursor: pointer; transition: all 0.2s;">
+                Xóa
+            </button>
+        </div>
+        `;
+    }).join('');
+}
+
+function addNewGroup() {
+    const nameInput = document.getElementById('new-group-name');
+    const urlInput = document.getElementById('new-group-url');
+
+    const name = nameInput.value.trim();
+    const url = urlInput.value.trim();
+
+    if (!name || !url) {
+        toast('Vui lòng điền đầy đủ Tên và URL nhóm Facebook!', 'error');
+        return;
+    }
+
+    if (!url.startsWith('http://') && !url.startsWith('https://')) {
+        toast('URL nhóm Facebook không hợp lệ (phải bắt đầu bằng http/https)!', 'error');
+        return;
+    }
+
+    if (!currentBotConfig.facebook_groups) {
+        currentBotConfig.facebook_groups = [];
+    }
+
+    currentBotConfig.facebook_groups.push({ name, url });
+
+    nameInput.value = '';
+    urlInput.value = '';
+
+    toast('Đã thêm nhóm mới vào danh sách (nhấn "Lưu Cấu Hình" để áp dụng)!', 'info');
+    renderFacebookGroups();
+}
+
+function deleteGroup(index) {
+    if (confirm(`Bạn chắc chắn muốn xóa nhóm "${currentBotConfig.facebook_groups[index].name}" khỏi danh sách?`)) {
+        currentBotConfig.facebook_groups.splice(index, 1);
+        toast('Đã xóa nhóm (nhấn "Lưu Cấu Hình" để áp dụng)!', 'info');
+        renderFacebookGroups();
+    }
+}
+
+async function saveBotConfig() {
+    const maxPosts = parseInt(document.getElementById('cfg-max-posts').value) || 5;
+    const maxGroups = parseInt(document.getElementById('cfg-max-groups').value) || 3;
+    const maxDays = parseInt(document.getElementById('cfg-max-days').value) || 3;
+
+    currentBotConfig.max_posts_per_group = maxPosts;
+    currentBotConfig.max_groups_per_session = maxGroups;
+    currentBotConfig.max_days_old = maxDays;
+
+    toast('Đang lưu cấu hình bot...', 'info');
+    try {
+        await apiFetch('/admin/bot-config', {
+            method: 'POST',
+            body: JSON.stringify(currentBotConfig)
+        });
+        toast('Đã lưu cấu hình bot thành công!', 'success');
+        fetchBotConfig();
+    } catch (e) {
+        toast(`Lỗi lưu cấu hình: ${e.message}`, 'error');
+    }
 }

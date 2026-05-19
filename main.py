@@ -63,23 +63,84 @@ def send_telegram_notification(text: str):
         logger.error(f"❌ Exception khi gửi Telegram: {e}")
 
 
-def run_pipeline():
+def run_pipeline(target_bot=None):
     logger.info("=" * 55)
-    logger.info("🤖 FULL PIPELINE: CRAWL → NLP → GEO → DB")
+    logger.info(f"🤖 FULL PIPELINE: CRAWL → NLP → GEO → DB | Target: {target_bot or 'ALL'}")
     logger.info("=" * 55)
+
+    db_handler = DBHandler()
+    db_handler.connect()
+
+    if target_bot and target_bot.lower() == "facebook":
+        logger.info("\n🌐 Running Facebook Crawler...")
+        db_handler.update_task_progress("facebook", "running", 0, 0, max_pages=1)
+        try:
+            from crawler.facebook_crawler import FacebookCrawler
+            crawler = FacebookCrawler()
+            
+            def fb_progress_cb(current_group, total_groups, current_count):
+                db_handler.update_task_progress("facebook", "running", current_count, current_group, max_pages=total_groups)
+
+            stats = crawler.crawl_and_save(progress_callback=fb_progress_cb)
+            logger.info(f"   ✅ Facebook Crawler finished. Stats: {stats}")
+            # Ghi nhận hoàn thành thành công
+            db_handler.update_task_progress("facebook", "completed", stats.get('inserted', 0), stats.get('total', 0))
+            # Send notification
+            msg = (
+                f"🤖 *Facebook Bot Report*\n\n"
+                f"✅ *Crawl Completed!*\n"
+                f"📦 Cào được: {stats.get('total', 0)} posts\n"
+                f"🚫 Bài bị lọc (Spam): {stats.get('spam', 0)}\n"
+                f"♻️ Bài trùng (Dup): {stats.get('duplicate', 0)}\n"
+                f"🔀 Trùng nguồn khác (Cross-dup): {stats.get('cross_dup', 0)}\n"
+                f"➕ Đã lưu mới: {stats.get('inserted', 0)} jobs"
+            )
+            send_telegram_notification(msg)
+        except Exception as e:
+            logger.error(f"❌ Facebook Crawler error: {e}")
+            db_handler.update_task_progress("facebook", "error", 0, 0, total_errors=1, error_log=str(e))
+        finally:
+            db_handler.close()
+        return
 
     all_jobs = []
 
     # ── 1. CRAWL ──────────────────────────────────────────
-    for cfg in CRAWLERS:
+    active_crawlers = CRAWLERS
+    if target_bot:
+        active_crawlers = [c for c in CRAWLERS if c["name"].lower() == target_bot.lower()]
+
+    if not active_crawlers:
+        logger.warning(f"⚠️ Không tìm thấy crawler cho target: {target_bot}")
+        db_handler.close()
+        return
+
+    for cfg in active_crawlers:
+        source_name = cfg["name"].lower()
         logger.info(f"\n🌐 Crawl: {cfg['name']}")
+        
+        # Lấy max_pages cấu hình động từ database (nếu có), mặc định sử dụng cấu hình từ env (cfg["pages"])
+        max_pages = db_handler.get_task_max_pages(source_name, default_val=cfg["pages"])
+        logger.info(f"   ⚙️ Configured max_pages: {max_pages}")
+        
+        db_handler.update_task_progress(source_name, "running", 0, 0, max_pages=max_pages)
         try:
-            crawler = cfg["class"](max_pages=cfg["pages"], headless=HEADLESS)
-            jobs = crawler.crawl()
+            crawler = cfg["class"](max_pages=max_pages, headless=HEADLESS)
+            
+            def make_progress_cb(src_name):
+                def cb(current_page, total_pages, current_count):
+                    db_handler.update_task_progress(src_name, "running", current_count, current_page, max_pages=total_pages)
+                return cb
+
+            jobs = crawler.crawl(progress_callback=make_progress_cb(source_name))
             all_jobs.extend(jobs)
             logger.info(f"   ✅ {len(jobs)} jobs")
+            db_handler.update_task_progress(source_name, "completed", len(jobs), max_pages)
         except Exception as e:
             logger.error(f"   ❌ Lỗi: {e}")
+            db_handler.update_task_progress(source_name, "error", 0, 0, total_errors=1, error_log=str(e))
+
+    db_handler.close()
 
     logger.info(f"\n📦 Raw: {len(all_jobs)} jobs")
 
@@ -87,7 +148,7 @@ def run_pipeline():
     if not all_jobs:
         logger.warning("⚠️ Không lấy được job nào! Bỏ qua các bước tiếp theo.")
         send_telegram_notification(
-            "⚠️ Pipeline hoàn tất nhưng *KHÔNG* thu thập được Job nào!"
+            f"⚠️ Pipeline hoàn tất nhưng *KHÔNG* thu thập được Job nào cho {target_bot or 'ALL'}!"
         )
         return
 
@@ -164,7 +225,7 @@ def run_pipeline():
 
     # Gửi thông báo
     msg = (
-        f"🤖 *Job Bot Report*\n\n"
+        f"🤖 *Job Bot Report ({target_bot or 'ALL'})*\n\n"
         f"✅ *Pipeline Completed!*\n"
         f"📦 Cào được: {len(all_jobs)} jobs\n"
         f"🧹 Sau khi clean: {len(df)} jobs\n"
@@ -181,8 +242,9 @@ def run_pipeline():
 def main():
     # Kiểm tra nếu người dùng truyền tham số 'now' thì chạy luôn 1 lần
     if len(sys.argv) > 1 and sys.argv[1] == "now":
-        logger.info("▶️ Chạy lập tức theo lệnh thủ công (manual run)...")
-        run_pipeline()
+        target = sys.argv[2] if len(sys.argv) > 2 else None
+        logger.info(f"▶️ Chạy lập tức theo lệnh thủ công (manual run) cho target: {target or 'ALL'}...")
+        run_pipeline(target)
         return
 
     logger.info(

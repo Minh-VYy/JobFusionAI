@@ -890,3 +890,14 @@ select.select-field option { background: var(--bg-elevated); }
 /* ── MISC ── */
 .mono { font-family: var(--mono); }
 code { font-family: var(--mono); font-size: 12px; color: var(--text-code); }
+
+/* ── SMALL SPINNER FOR LIVE PROGRESS ── */
+.spinner-small {
+  width: 12px;
+  height: 12px;
+  border: 2px solid rgba(0, 212, 255, 0.2);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+  display: inline-block;
+}

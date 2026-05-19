@@ -7,7 +7,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600&family=Syne:wght@400;600;700;800&display=swap" rel="stylesheet" />
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
-  <link rel="stylesheet" href="admin_dashboard.css" />
+  <link rel="stylesheet" href="admin.css" />
 </head>
 <body>
 
@@ -150,6 +150,59 @@
               <div class="toggle-switch" id="toggle-topcv" onclick="toggleSchedule('topcv', this)">
                 <div class="toggle-knob"></div>
               </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Crawler Tuning & Facebook Groups Card -->
+      <div class="card" id="config-card">
+        <div class="card-header">
+          <div class="card-title">Cấu Hình Thông Số Cào Dữ Liệu</div>
+          <div class="card-subtitle">Tinh chỉnh các tham số cào và quản lý danh sách nhóm Facebook không giới hạn</div>
+        </div>
+        
+        <div class="config-grid" style="display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 24px; margin-top: 16px;">
+          <!-- Left Col: Parameters -->
+          <div class="config-col" style="display: flex; flex-direction: column; gap: 16px;">
+            <h3 style="font-family: 'Syne', sans-serif; font-size: 16px; margin: 0; color: #1e293b; border-bottom: 2px solid #e2e8f0; padding-bottom: 8px;">Tham Số Hệ Thống</h3>
+            
+            <div class="form-group">
+              <label class="form-label" style="font-weight: 600; font-size: 13px;">Số bài đăng tối đa mỗi Group / mỗi lần cào</label>
+              <input type="number" class="input-field" id="cfg-max-posts" placeholder="5" style="width: 100%;" />
+            </div>
+            
+            <div class="form-group">
+              <label class="form-label" style="font-weight: 600; font-size: 13px;">Số Group tối đa chạy mỗi phiên cào (Facebook)</label>
+              <input type="number" class="input-field" id="cfg-max-groups" placeholder="3" style="width: 100%;" />
+            </div>
+            
+            <div class="form-group">
+              <label class="form-label" style="font-weight: 600; font-size: 13px;">Hạn chế bài đăng cũ hơn (Số ngày tối đa)</label>
+              <input type="number" class="input-field" id="cfg-max-days" placeholder="3" style="width: 100%;" />
+              <div class="form-hint" style="font-size: 11px; color: #64748b; margin-top: 4px;">Ví dụ: 3 tức là chỉ lấy các bài đăng trong vòng 3 ngày gần nhất.</div>
+            </div>
+            
+            <button class="btn-approve" onclick="saveBotConfig()" style="align-self: flex-start; padding: 10px 20px; font-size: 14px; font-weight: 600; border-radius: 6px;">Lưu Cấu Hình</button>
+          </div>
+          
+          <!-- Right Col: Facebook Groups List -->
+          <div class="config-col" style="display: flex; flex-direction: column; gap: 16px;">
+            <h3 style="font-family: 'Syne', sans-serif; font-size: 16px; margin: 0; color: #1e293b; border-bottom: 2px solid #e2e8f0; padding-bottom: 8px;">Quản Lý Nhóm Facebook Cào Tin</h3>
+            
+            <!-- Add group form -->
+            <div style="background: #f8fafc; padding: 12px; border-radius: 8px; border: 1px dashed #cbd5e1; display: flex; flex-direction: column; gap: 10px;">
+              <div style="font-size: 12px; font-weight: 600; color: #475569;">Thêm Group Facebook Mới</div>
+              <div style="display: flex; gap: 8px;">
+                <input type="text" class="input-field" id="new-group-name" placeholder="Tên nhóm (ví dụ: Việc làm Đà Nẵng)" style="flex: 1; font-size: 12px; height: 36px; padding: 0 10px;" />
+                <input type="text" class="input-field" id="new-group-url" placeholder="https://www.facebook.com/groups/..." style="flex: 1.5; font-size: 12px; height: 36px; padding: 0 10px;" />
+                <button class="btn-approve" onclick="addNewGroup()" style="padding: 0 14px; font-size: 18px; line-height: 1; border-radius: 6px; height: 36px;">+</button>
+              </div>
+            </div>
+
+            <!-- Group list container -->
+            <div style="max-height: 250px; overflow-y: auto; padding-right: 4px;" id="fb-groups-list-container">
+              <div style="text-align: center; color: #64748b; padding: 20px; font-size: 12px;">Đang tải danh sách nhóm...</div>
             </div>
           </div>
         </div>
@@ -405,6 +458,6 @@
     </div>
   </div>
 
-  <script src="admin_dashboard.js"></script>
+  <script src="admin.js"></script>
 </body>
 </html>

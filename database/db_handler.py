@@ -104,12 +104,24 @@ class DBHandler:
 
         for job in jobs_data:
             try:
+                # Null-safe: chuyển NaN/None/chuỗi rỗng thành None cho SQL
+                import math
+                def safe_float(v):
+                    if v is None or str(v).strip() == "": return None
+                    try:
+                        f = float(v)
+                        return None if math.isnan(f) else f
+                    except (ValueError, TypeError):
+                        return None
+
                 # Salary: ưu tiên dùng giá trị đã parse trong JobModel,
                 # fallback parse lại từ salary_raw nếu cần
-                salary_min = job.get("salary_min")
-                salary_max = job.get("salary_max")
+                salary_min = safe_float(job.get("salary_min"))
+                salary_max = safe_float(job.get("salary_max"))
                 if salary_min is None and salary_max is None:
-                    salary_min, salary_max = self._parse_salary(job.get("salary", ""))
+                    parsed_min, parsed_max = self._parse_salary(job.get("salary", ""))
+                    salary_min = safe_float(parsed_min)
+                    salary_max = safe_float(parsed_max)
 
                 # external_id từ URL
                 external_id = self._extract_external_id(job.get("job_url", ""))
@@ -126,23 +138,9 @@ class DBHandler:
                     return (str(val) if val is not None else "")[:n]
 
                 # Tọa độ GPS từ geocoding
-                latitude = job.get("latitude")
-                longitude = job.get("longitude")
-                geocoding_confidence = job.get("geocoding_confidence", 0)
-
-                # Null-safe: chuyển NaN/None thành None cho SQL
-                import math
-                def safe_float(v):
-                    if v is None: return None
-                    try:
-                        f = float(v)
-                        return None if math.isnan(f) else f
-                    except (ValueError, TypeError):
-                        return None
-
-                latitude = safe_float(latitude)
-                longitude = safe_float(longitude)
-                geocoding_confidence = safe_float(geocoding_confidence) or 0
+                latitude = safe_float(job.get("latitude"))
+                longitude = safe_float(job.get("longitude"))
+                geocoding_confidence = safe_float(job.get("geocoding_confidence"))
 
                 # posted_date
                 from datetime import datetime as _dt
@@ -293,8 +291,11 @@ class DBHandler:
         """Trích ID từ URL job. VD: .../2135451.html → '2135451'"""
         if not url:
             return ""
-        match = re.search(r"/(\d{5,})", url)
-        return match.group(1) if match else url[-50:]
+        # Thử tìm các chuỗi số từ 5 chữ số trở lên trong URL (lấy số cuối cùng thường là Job ID)
+        matches = re.findall(r"\d{5,}", url)
+        if matches:
+            return matches[-1]
+        return url[-50:]
 
     # ==================== QUERY ====================
 
@@ -339,3 +340,65 @@ class DBHandler:
         except Exception as e:
             logger.warning(f"   ⚠️ get_crawled_urls failed: {e} — fallback crawl all")
             return set()
+
+    def update_task_progress(self, source_name: str, status: str, total_scraped: int = 0, total_found: int = 0, total_errors: int = 0, error_log: str = None, max_pages: int = None) -> None:
+        """Cập nhật tiến độ của task trong bảng scrape_tasks"""
+        if not self.conn:
+            return
+        from datetime import datetime
+        try:
+            cursor = self.conn.cursor()
+            # Kiểm tra xem task đã tồn tại chưa
+            cursor.execute("SELECT id FROM scrape_tasks WHERE source_name = ?", (source_name,))
+            row = cursor.fetchone()
+            now = datetime.utcnow()
+            if row:
+                task_id = row[0]
+                sql = """
+                    UPDATE scrape_tasks 
+                    SET status = ?, 
+                        total_scraped = ?, 
+                        total_found = ?, 
+                        total_errors = ?, 
+                        error_log = ?, 
+                        updated_at = ?
+                """
+                params = [status, total_scraped, total_found, total_errors, error_log, now]
+                if max_pages is not None:
+                    sql += ", max_pages = ?"
+                    params.append(max_pages)
+                if status == "running":
+                    sql += ", last_run_at = ?"
+                    params.append(now)
+                sql += " WHERE id = ?"
+                params.append(task_id)
+                cursor.execute(sql, params)
+            else:
+                # Tạo mới nếu chưa có
+                sql = """
+                    INSERT INTO scrape_tasks (name, source_name, seed_url, status, total_scraped, total_found, total_errors, error_log, last_run_at, created_at, updated_at, max_pages, is_scheduled, schedule_cron)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """
+                name = f"{source_name.capitalize()} Crawler"
+                seed_url = f"https://www.{source_name}.com" if source_name != "facebook" else "https://www.facebook.com"
+                last_run = now if status == "running" else None
+                m_pages = max_pages if max_pages is not None else 1
+                cursor.execute(sql, (name, source_name, seed_url, status, total_scraped, total_found, total_errors, error_log, last_run, now, now, m_pages, False, "Hàng ngày"))
+            self.conn.commit()
+        except Exception as e:
+            logger.error(f"❌ Lỗi update_task_progress cho {source_name}: {e}")
+
+    def get_task_max_pages(self, source_name: str, default_val: int = 2) -> int:
+        """Lấy số trang cào tối đa được cấu hình trong bảng scrape_tasks"""
+        if not self.conn:
+            return default_val
+        try:
+            cursor = self.conn.cursor()
+            cursor.execute("SELECT max_pages FROM scrape_tasks WHERE source_name = ?", (source_name.lower(),))
+            row = cursor.fetchone()
+            if row and row[0] is not None:
+                return int(row[0])
+        except Exception as e:
+            logger.warning(f"⚠️ get_task_max_pages failed for {source_name}: {e}")
+        return default_val
+

@@ -1,4 +1,5 @@
 # server.py
+from pydantic._internal import _forward_ref
 import sys
 import os
 import time
@@ -9,8 +10,11 @@ from datetime import datetime, timedelta
 from typing import List, Optional
 
 from fastapi import FastAPI, Depends, HTTPException, status, Form, WebSocket, WebSocketDisconnect, Body
+# pyrefly: ignore [missing-import]
 from fastapi.middleware.cors import CORSMiddleware
+# pyrefly: ignore [missing-import]
 from fastapi.staticfiles import StaticFiles
+# pyrefly: ignore [missing-import]
 from fastapi.responses import RedirectResponse
 from pydantic import BaseModel
 import jwt
@@ -154,6 +158,28 @@ def get_admin_stats():
     finally:
         session.close()
 
+# --- API Admin: Bot Config ---
+BOT_CONFIG_PATH = os.path.join(os.path.dirname(__file__), "data", "bot_config.json")
+
+@app.get("/api/admin/bot-config")
+def get_bot_config():
+    if not os.path.exists(BOT_CONFIG_PATH):
+        return {
+            "max_posts_per_group": 5,
+            "max_groups_per_session": 3,
+            "max_days_old": 3,
+            "facebook_groups": []
+        }
+    with open(BOT_CONFIG_PATH, "r", encoding="utf-8") as f:
+        return json.load(f)
+
+@app.post("/api/admin/bot-config")
+def update_bot_config(config: dict = Body(...)):
+    os.makedirs(os.path.dirname(BOT_CONFIG_PATH), exist_ok=True)
+    with open(BOT_CONFIG_PATH, "w", encoding="utf-8") as f:
+        json.dump(config, f, ensure_ascii=False, indent=2)
+    return {"message": "Cập nhật cấu hình thành công"}
+
 # --- API Admin: Quản Lý Scraping Tasks ---
 class TaskCreate(BaseModel):
     name: str
@@ -205,14 +231,94 @@ def run_task(task_id: int):
         session.commit()
 
         # Khởi động crawler pipeline bất đồng bộ bằng Subprocess
-        # Chạy 'python main.py now' ở chế độ background
+        # Chạy 'python main.py now [source_name]' ở chế độ background
         try:
-            subprocess.Popen([sys.executable, "main.py", "now"], close_fds=True if os.name != 'nt' else False)
-            logger.info(f"🚀 Triggered Crawler Pipeline for Task #{task_id} in background.")
+            args = [sys.executable, "main.py", "now"]
+            if task.source_name:
+                args.append(task.source_name)
+            subprocess.Popen(args, close_fds=True if os.name != 'nt' else False)
+            logger.info(f"🚀 Triggered Crawler Pipeline for Task #{task_id} ({task.source_name or 'all'}) in background.")
         except Exception as e:
             logger.error(f"Error launching background crawl subprocess: {e}")
 
         return {"message": "Task started in background", "task_id": task_id}
+    finally:
+        session.close()
+
+@app.post("/api/admin/tasks/by-source/{source_name}/run")
+def run_task_by_source(source_name: str):
+    session = models.get_session()
+    try:
+        task = session.query(ScrapeTask).filter(ScrapeTask.source_name == source_name).first()
+        if not task:
+            # Tạo task mặc định nếu chưa tồn tại
+            task = ScrapeTask(
+                name=f"{source_name.capitalize()} Crawler",
+                source_name=source_name,
+                seed_url=f"https://www.{source_name}.com" if source_name != "facebook" else "https://www.facebook.com",
+                status="idle"
+            )
+            session.add(task)
+            session.commit()
+            session.refresh(task)
+        
+        task.status = "running"
+        task.last_run_at = datetime.utcnow()
+        session.commit()
+
+        try:
+            args = [sys.executable, "main.py", "now"]
+            args.append(source_name)
+            subprocess.Popen(args, close_fds=True if os.name != 'nt' else False)
+            logger.info(f"🚀 Triggered Crawler Pipeline for {source_name} in background.")
+        except Exception as e:
+            logger.error(f"Error launching background crawl subprocess: {e}")
+
+        return {"message": "Task started in background", "source_name": source_name}
+    finally:
+        session.close()
+
+# --- API Admin: Cập nhật Lịch Trình Tự Động ---
+class ScheduleUpdate(BaseModel):
+    is_scheduled: bool
+    schedule_cron: str
+
+@app.post("/api/admin/tasks/by-source/{source_name}/schedule")
+def update_task_schedule_by_source(source_name: str, data: ScheduleUpdate):
+    session = models.get_session()
+    try:
+        task = session.query(ScrapeTask).filter(ScrapeTask.source_name == source_name).first()
+        if not task:
+            # Tạo task mặc định nếu chưa tồn tại
+            task = ScrapeTask(
+                name=f"{source_name.capitalize()} Crawler",
+                source_name=source_name,
+                seed_url=f"https://www.{source_name}.com" if source_name != "facebook" else "https://www.facebook.com",
+                status="idle"
+            )
+            session.add(task)
+            session.commit()
+            session.refresh(task)
+        
+        task.is_scheduled = data.is_scheduled
+        task.schedule_cron = data.schedule_cron
+        session.commit()
+        return {"message": "Cập nhật lịch chạy thành công", "task": task.to_dict()}
+    finally:
+        session.close()
+
+@app.post("/api/admin/tasks/{task_id}/schedule")
+def update_task_schedule(task_id: int, data: ScheduleUpdate):
+    session = models.get_session()
+    try:
+        task = session.query(ScrapeTask).filter(ScrapeTask.id == task_id).first()
+        if not task:
+            raise HTTPException(status_code=404, detail="Task không tồn tại")
+        
+        task.is_scheduled = data.is_scheduled
+        task.schedule_cron = data.schedule_cron
+        session.commit()
+        return {"message": "Cập nhật lịch chạy thành công", "task": task.to_dict()}
     finally:
         session.close()
 

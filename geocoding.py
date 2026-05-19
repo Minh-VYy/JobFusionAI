@@ -94,6 +94,35 @@ class GeocodingProcessor:
         self._cache: dict = {}
         self._last_nominatim_call = 0  # Rate limiting tracker
 
+    def _strip_building_info(self, address: str) -> str:
+        """Loại bỏ tên tòa nhà, tầng, phòng để Nominatim dễ nhận biết đường phố hơn."""
+        # Loại bỏ các cụm "Tầng X", "Lầu X", "Phòng Y", "Floor X", "Room Y" ở đầu hoặc giữa câu
+        address = re.sub(r'(?i)\b(?:tầng|lầu|floor|room|phòng|p\.?)\s*\d+\b\s*(?:-\s*|\,\s*)?', '', address)
+        address = re.sub(r'(?i)\b\d+\s*(?:st|nd|rd|th)\s*floor\s*(?:-\s*|\,\s*)?', '', address)
+        
+        # Loại bỏ các cụm "Tòa nhà X", "Building Y", "OfficeHaus", "OFH Building", "Tower"
+        address = re.sub(r'(?i)\b(?:tòa nhà|building|officehaus|ofh building|tower)\s+[\w\s\d\-]+(?:,\s*|\s*)', '', address)
+        
+        # Làm sạch khoảng trống thừa hoặc dấu phẩy thừa ở đầu/cuối
+        address = re.sub(r'^\s*,\s*|\s*,\s*$', '', address)
+        return address.strip()
+
+    def _extract_street_and_city(self, address: str) -> Optional[str]:
+        """Tách lấy số nhà, tên đường và tên thành phố chính để tìm kiếm tối giản."""
+        parts = [p.strip() for p in address.split(',') if p.strip()]
+        if len(parts) < 2:
+            return None
+        
+        # Thử lấy phần đầu tiên (số nhà/tên đường) và phần cuối cùng (thành phố)
+        street = parts[0]
+        city = parts[-1]
+        
+        # Nếu phần cuối cùng là "Việt Nam", lấy phần kề cuối làm thành phố
+        if city.lower() in ["việt nam", "vietnam", "viet nam"] and len(parts) >= 3:
+            city = parts[-2]
+            
+        return f"{street}, {city}, Việt Nam"
+
     def geocode(self, address: str) -> Optional[dict]:
         """
         Chuyển đổi địa chỉ text → tọa độ GPS.
@@ -124,13 +153,31 @@ class GeocodingProcessor:
         if not result and config.GOOGLE_MAPS_API_KEY:
             result = self._geocode_google(address_normalized)
 
+        # Thử tầng 2.1: Loại bỏ tên tòa nhà/tầng và thử lại
+        if not result or result.get("confidence", 0) <= 0.6:
+            clean_addr = self._strip_building_info(address_normalized)
+            if clean_addr != address_normalized:
+                logger.info(f"[Geocoding] Progressive step 1 (strip building): '{address_normalized}' -> '{clean_addr}'")
+                temp_res = self._geocode_nominatim(clean_addr)
+                if temp_res and temp_res.get("confidence", 0) > (result.get("confidence", 0) if result else 0):
+                    result = temp_res
+
+        # Thử tầng 2.2: Tách lấy đường phố + thành phố tối giản và thử lại
+        if not result or result.get("confidence", 0) <= 0.6:
+            clean_addr = self._strip_building_info(address_normalized)
+            simplified_addr = self._extract_street_and_city(clean_addr)
+            if simplified_addr:
+                logger.info(f"[Geocoding] Progressive step 2 (simplified): '{clean_addr}' -> '{simplified_addr}'")
+                temp_res = self._geocode_nominatim(simplified_addr)
+                if temp_res and temp_res.get("confidence", 0) > (result.get("confidence", 0) if result else 0):
+                    result = temp_res
+
         # Tầng 4: Fallback thủ công theo quận Đà Nẵng
         if not result:
             result = self._geocode_fallback(address_normalized)
 
-        # Nếu vẫn không có kết quả, thử tách các đoạn địa chỉ và thử từng phần nhỏ hơn.
+        # Nếu vẫn không có kết quả, thử tìm tên thành phố lớn để định vị tương đối
         if not result:
-            # Thử tìm tên thành phố lớn trong chuỗi để ưu tiên
             cities = [
                 "hồ chí minh",
                 "ho chi minh",
@@ -150,7 +197,6 @@ class GeocodingProcessor:
                 if city in lower:
                     try_addr = f"{city.title()}, Việt Nam"
                     logger.info(f"[Geocoding] Trying city fallback: {try_addr}")
-                    # try OpenCage first if available
                     if hasattr(config, "OPENCAGE_API_KEY") and config.OPENCAGE_API_KEY:
                         result = self._geocode_opencage(try_addr)
                     if not result:
@@ -158,40 +204,61 @@ class GeocodingProcessor:
                     if result:
                         # Lower confidence because we only matched city
                         result["confidence"] = min(result.get("confidence", 0.5), 0.6)
-                        return result
+                        break
 
-            # Nếu không tìm thấy city hoặc không thành công, thử các đoạn chia theo dấu phẩy hoặc ':'
-            parts = re.split(r"[,;:\n]+", address)
-            # sắp xếp các phần theo độ dài (ưu tiên phần dài hơn)
-            parts = [p.strip() for p in parts if len(p.strip()) > 3]
-            parts = sorted(parts, key=lambda x: -len(x))
-            for part in parts:
-                try_part = self._normalize_address(part)
-                logger.info(f"[Geocoding] Trying part fallback: {try_part}")
-                if hasattr(config, "OPENCAGE_API_KEY") and config.OPENCAGE_API_KEY:
-                    result = self._geocode_opencage(try_part)
-                if not result:
-                    result = self._geocode_nominatim(try_part)
-                if result:
-                    result["confidence"] = min(result.get("confidence", 0.5), 0.5)
-                    return result
+            if not result:
+                # Nếu không tìm thấy city hoặc không thành công, thử các đoạn chia theo dấu phẩy hoặc ':'
+                parts = re.split(r"[,;:\n]+", address)
+                # sắp xếp các phần theo độ dài (ưu tiên phần dài hơn)
+                parts = [p.strip() for p in parts if len(p.strip()) > 3]
+                parts = sorted(parts, key=lambda x: -len(x))
+                for part in parts:
+                    try_part = self._normalize_address(part)
+                    logger.info(f"[Geocoding] Trying part fallback: {try_part}")
+                    if hasattr(config, "OPENCAGE_API_KEY") and config.OPENCAGE_API_KEY:
+                        result = self._geocode_opencage(try_part)
+                    if not result:
+                        result = self._geocode_nominatim(try_part)
+                    if result:
+                        result["confidence"] = min(result.get("confidence", 0.5), 0.5)
+                        break
 
         if result:
             self._cache[address_normalized] = result
 
         return result
 
+    def _translate_english_terms(self, address: str) -> str:
+        """Dịch các từ tiếng Anh thông dụng sang tiếng Việt để công cụ định vị Nominatim nhận biết tốt hơn."""
+        # HCM, HCMC, Ho Chi Minh City -> Hồ Chí Minh
+        address = re.sub(r'(?i)\b(?:ho chi minh city|hcmc|hcm|saigon|sài gòn)\b', 'Hồ Chí Minh', address)
+        # Hanoi, Ha Noi -> Hà Nội
+        address = re.sub(r'(?i)\b(?:hanoi|ha noi)\b', 'Hà Nội', address)
+        # Da Nang -> Đà Nẵng
+        address = re.sub(r'(?i)\b(?:da nang|danang)\b', 'Đà Nẵng', address)
+        
+        # Street -> Đường
+        address = re.sub(r'(?i)\b(?:street|str\.?)\b', 'Đường', address)
+        # Ward -> Phường
+        address = re.sub(r'(?i)\b(?:ward|w\.?)\b', 'Phường', address)
+        # District -> Quận
+        address = re.sub(r'(?i)\b(?:district|dist\.?|d\.?)\b', 'Quận', address)
+        # Tower -> Tòa nhà
+        address = re.sub(r'(?i)\b(?:tower)\b', 'Tòa nhà', address)
+        
+        return address.strip()
+
     def _normalize_address(self, address: str) -> str:
-        """Chuẩn hóa địa chỉ tiếng Việt - KHÔNG thêm thành phố cố định."""
-        address = address.strip()
+        """Chuẩn hóa địa chỉ tiếng Việt - dịch từ tiếng Anh và thêm quốc gia nếu thiếu."""
+        address = self._translate_english_terms(address.strip())
         address_lower = address.lower()
 
         # Chỉ thêm ", Việt Nam" nếu chưa có tên thành phố lớn hoặc quốc gia
         VN_MARKERS = [
             "việt nam", "vietnam", "viet nam",
-            "hà nội", "ha noi", "hanoi",
-            "hồ chí minh", "ho chi minh", "hcm", "tp.hcm", "saigon", "sài gòn",
-            "đà nẵng", "da nang", "danang",
+            "hà nội", "ha noi", "hành phố hà nội",
+            "hồ chí minh", "ho chi minh", "tp.hcm",
+            "đà nẵng", "da nang",
             "hải phòng", "hai phong",
             "cần thơ", "can tho",
             "bình dương", "binh duong",

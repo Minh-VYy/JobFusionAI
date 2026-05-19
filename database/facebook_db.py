@@ -85,6 +85,22 @@ class FacebookDB:
         post_id = job_data.get("post_id", "")[:200]
         fp_hash = job_data.get("fingerprint_hash", "")[:64]
 
+        # Định vị động địa điểm cụ thể
+        from geocoding import geocoder
+        location = job_data.get("location", "").strip()
+        
+        # Mặc định Đà Nẵng nếu không tìm thấy địa chỉ cụ thể
+        lat, lng, confidence = 16.0544, 108.2022, 0.0
+        is_geocoded = 0
+        
+        if location and len(location) > 3:
+            res = geocoder.geocode(location)
+            if res:
+                lat = res.get("lat", 16.0544)
+                lng = res.get("lng", 108.2022)
+                confidence = res.get("confidence", 0.0)
+                is_geocoded = 1 if confidence >= 0.3 else 0
+
         # Atomic INSERT ... WHERE NOT EXISTS (ngăn race condition)
         cursor.execute("""
             INSERT INTO jobs (
@@ -92,7 +108,7 @@ class FacebookDB:
                 salary_raw, address_raw, address_clean,
                 skills, source_url, source_name,
                 external_id, status,
-                is_geocoded, latitude, longitude,
+                is_geocoded, latitude, longitude, geocoding_confidence,
                 normalized_title, normalized_location,
                 salary_min, salary_max, phone,
                 fingerprint_hash, source_type,
@@ -104,7 +120,7 @@ class FacebookDB:
                 ?, ?, ?,
                 ?, ?, 'facebook',
                 ?, 'pending',
-                0, 16.0, 108.2,
+                ?, ?, ?, ?,
                 ?, ?,
                 ?, ?, ?,
                 ?, 'facebook',
@@ -126,6 +142,7 @@ class FacebookDB:
             job_data.get("skills", "")[:1000],
             job_url,
             post_id,
+            is_geocoded, lat, lng, confidence,
             job_data.get("normalized_title", "")[:500],
             job_data.get("normalized_location", "")[:300],
             job_data.get("salary_min", None),
@@ -138,7 +155,7 @@ class FacebookDB:
             # WHERE NOT EXISTS params
             job_url,
             post_id,
-            fp_hash,
+            fp_hash
         ))
 
         self.conn.commit()
