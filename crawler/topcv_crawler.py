@@ -118,11 +118,11 @@ class TopCVCrawler(BaseCrawler):
 
         # ✅ FIX: Selector đúng từ HTML thực tế
         # --- Salary ---
-        salary_el = card.select_one("div.box-salary-and-address__salary")
+        salary_el = card.select_one("label.title-salary")
         job.salary = salary_el.get_text(strip=True) if salary_el else "Thỏa thuận"
 
         # --- Location ---
-        location_el = card.select_one("div.box-salary-and-address__address")
+        location_el = card.select_one("label.address")
         job.location = location_el.get_text(strip=True) if location_el else ""
 
         # --- Skills ---
@@ -272,9 +272,54 @@ class TopCVCrawler(BaseCrawler):
                 if parent:
                     loc_container = parent.find_next_sibling("div")
                     if loc_container:
-                        loc_text = loc_container.get_text(separator=", ", strip=True)
-                        if loc_text and len(loc_text) > 5 and len(loc_text) < 500:
-                            job.location = re.sub(r"^\-\s*", "", loc_text.strip())
+                        # Lấy tất cả các dòng địa chỉ (chia theo div, p, hoặc br)
+                        lines = []
+                        for child in loc_container.find_all(["div", "p"]):
+                            text = child.get_text(strip=True)
+                            if text:
+                                lines.append(text)
+                        
+                        if not lines:
+                            # Fallback tách theo dòng thô
+                            lines = [l.strip() for l in loc_container.get_text(separator="\n").split("\n") if l.strip()]
+
+                        cleaned_lines = []
+                        all_locs = []
+                        
+                        for line in lines:
+                            line_clean = re.sub(r"^[-\*\•\s]+", "", line).strip()
+                            if not line_clean:
+                                continue
+                            
+                            # Clean các dấu phẩy hoặc dấu hai chấm thừa
+                            line_clean = re.sub(r"\s*:\s*", ": ", line_clean)
+                            line_clean = re.sub(r",+", ",", line_clean)
+                            line_clean = re.sub(r"\s*,\s*", ", ", line_clean)
+                            line_clean = line_clean.strip(" ,:")
+                            
+                            if line_clean and line_clean not in cleaned_lines:
+                                cleaned_lines.append(line_clean)
+                                
+                                # Đưa Tỉnh/Thành xuống cuối để geocoder nhận dạng hoàn hảo
+                                # Ví dụ: "Đồng Nai: 161/1 Trương Định" -> "161/1 Trương Định, Đồng Nai"
+                                match = re.match(r"^([^:]+):\s*(.*)$", line_clean)
+                                if match:
+                                    province = match.group(1).strip()
+                                    specific_addr = match.group(2).strip()
+                                    addr_normalized = f"{specific_addr}, {province}"
+                                else:
+                                    addr_normalized = line_clean
+                                
+                                all_locs.append({
+                                    "address": addr_normalized,
+                                    "raw_text": line_clean
+                                })
+                        
+                        if cleaned_lines:
+                            job.location = " - ".join(cleaned_lines)
+                        
+                        if all_locs:
+                            job.all_locations = all_locs
 
             # Kỹ năng (Skills) deduplication fix (chỉ lọc những skill rác)
             if job.skills:

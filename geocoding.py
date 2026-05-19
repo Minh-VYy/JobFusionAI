@@ -250,13 +250,40 @@ class GeocodingProcessor:
 
     def _normalize_address(self, address: str) -> str:
         """Chuẩn hóa địa chỉ tiếng Việt - dịch từ tiếng Anh và thêm quốc gia nếu thiếu."""
-        address = self._translate_english_terms(address.strip())
+        if not address:
+            return ""
+
+        # 1. Loại bỏ các phần chú thích trong ngoặc đơn chứa chữ "cũ", "mới", "hành chính mới", hoặc tên quận/huyện cũ
+        # Ví dụ: "Phường Tam Hiệp (Thành phố Biên Hòa cũ)" -> "Phường Tam Hiệp"
+        address = re.sub(r'\s*\([^)]*\bcũ\b[^)]*\)', '', address, flags=re.IGNORECASE)
+        address = re.sub(r'\s*\([^)]*\bmới\b[^)]*\)', '', address, flags=re.IGNORECASE)
+        address = re.sub(r'\s*\([^)]*\bhành\s*chính[^)]*\)', '', address, flags=re.IGNORECASE)
+        
+        # 2. Loại bỏ các ngoặc đơn rỗng hoặc ngoặc đơn chứa thông tin phụ không cần thiết cho geocoding
+        address = re.sub(r'\s*\([^)]*\)', '', address)
+        
+        # 3. Làm sạch dấu phẩy kép, dấu hai chấm thừa
+        address = re.sub(r'\s*:\s*', ', ', address)
+        address = re.sub(r',+', ',', address)
+        address = re.sub(r'\s*,\s*', ', ', address)
+        address = address.strip(" ,:")
+        
+        # 4. Dịch các cụm từ tiếng Anh sang tiếng Việt
+        address = self._translate_english_terms(address)
+        address = address.strip(" ,:")
+
+        # 5. Nếu địa chỉ bắt đầu bằng Tỉnh/Thành phố dạng "Đồng Nai, 161/1 Trương Định", chuyển Tỉnh/Thành xuống cuối câu
+        PROVINCES_PATTERN = r"(?i)^(Hồ Chí Minh|Hà Nội|Đà Nẵng|Bình Dương|Đồng Nai|Cần Thơ|Hải Phòng|Long An|Khánh Hòa|Quảng Nam|Thừa Thiên Huế|Bà Rịa\s*-\s*Vũng Tàu|Bà Rịa Vũng Tàu|Hải Dương|Bắc Ninh|Vĩnh Phúc|Quảng Ninh),\s*(.*)$"
+        match = re.match(PROVINCES_PATTERN, address)
+        if match:
+            address = f"{match.group(2).strip()}, {match.group(1).strip()}"
+
         address_lower = address.lower()
 
         # Chỉ thêm ", Việt Nam" nếu chưa có tên thành phố lớn hoặc quốc gia
         VN_MARKERS = [
             "việt nam", "vietnam", "viet nam",
-            "hà nội", "ha noi", "hành phố hà nội",
+            "hà nội", "ha noi", "thành phố hà nội",
             "hồ chí minh", "ho chi minh", "tp.hcm",
             "đà nẵng", "da nang",
             "hải phòng", "hai phong",
@@ -267,30 +294,34 @@ class GeocodingProcessor:
         has_location_context = any(marker in address_lower for marker in VN_MARKERS)
         if not has_location_context:
             address = f"{address}, Việt Nam"
-        return address
+
+        # Làm sạch lại lần cuối sau khi ghép quốc gia
+        address = re.sub(r',+', ',', address)
+        address = re.sub(r'\s*,\s*', ', ', address)
+        return address.strip(" ,:")
 
     def _split_addresses(self, address: str) -> list[str]:
         """
-        Tách cỗ hợp address chứa nhiều địa chỉ (VD: VietnamWorks liệt kê 2 văn phòng).
-
-        Chiến lược: tìm "ranh giới thành phố" — điểm nào trong chuỗi mà sau dấu phẩy
-        là địa chỉ mới bắt đầu (có ký tự hoa, chứa số đường, hoặc chứa tên toà nhà).
-
-        Qui tắc chia:
-        - Địa chỉ được ngăn cách khi có tên thành phố lớn (Hanoi, HCM, ...)
-          xuất hiện sau đó là một đoạn mới (bắt đầu bằng viết hoa hoặc số).
-        - Nếu chỉ có một địa chỉ thì trả về list một phần tử.
-
-        Returns:
-            list[địa_chỉ]: danh sách địa chỉ riêng lẻ
+        Tách tổ hợp address chứa nhiều địa chỉ.
         """
         if not address or len(address.strip()) < 5:
             return [address]
 
-        # Các marker tên thành phố mà khi xuất hiện có thể là „raãnh giới“ của địa chỉ
+        # 1. Tách theo dấu gạch ngang dạng danh sách hoặc dòng mới: "- Hồ Chí Minh: ... - Hà Nội: ..."
+        parts = []
+        if " - " in address or "\n" in address or " – " in address:
+            raw_parts = re.split(r'\s*(?:[\-\n•]| – )\s*', address)
+            for p in raw_parts:
+                p_clean = p.strip(" ,-:")
+                if len(p_clean) > 8:
+                    parts.append(p_clean)
+
+        if parts:
+            return parts
+
+        # 2. Fallback tìm ranh giới thành phố cũ (nếu có dấu phẩy)
         CITY_BOUNDARY_PATTERN = re.compile(
             r"""(?ix)
-            # Sau một marker thành phố, tìm dấu phẩy theo sau bắt đầu địa chỉ mới
             (?P<city_end>
                 \b(?:
                     Hanoi|Hà\s*Nội|HAN|HNI|
@@ -303,21 +334,17 @@ class GeocodingProcessor:
                     Dong\s*Nai|Đồng\s*Nai
                 )\b
             )
-            # theo sau là dấu phẩy rồi chử cái in hoa hoặc số (bắt đầu địa chỉ mới)
             ,\s*(?=[A-ZĐẠỮẨỤẦỐẢĂÂÊÔỰ\d])
             """,
         )
 
-        # Tìm vị trí cắt - cuối phần city_end
         split_points = []
         for m in CITY_BOUNDARY_PATTERN.finditer(address):
-            # Vị trí cắt: sau dấu phẩy ngay sau thành phố
-            split_points.append(m.end("city_end") + 1)  # +1 để bỏ qua dấu phẩy
+            split_points.append(m.end("city_end") + 1)
 
         if not split_points:
             return [address.strip()]
 
-        # Xây dựng danh sách địa chỉ từ các điểm cắt
         parts = []
         prev = 0
         for sp in split_points:
@@ -325,14 +352,11 @@ class GeocodingProcessor:
             if part.strip():
                 parts.append(part.strip())
             prev = sp
-        # Phần cuối
         last_part = address[prev:].strip().lstrip(", ")
         if last_part:
             parts.append(last_part)
 
-        # Loc bỏ địa chỉ quá ngắn (chỉ có tên thành phố)
         parts = [p for p in parts if len(p) > 8]
-
         return parts if parts else [address.strip()]
 
     def _geocode_nominatim(self, address: str) -> Optional[dict]:
