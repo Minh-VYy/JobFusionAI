@@ -4,6 +4,8 @@ import sys
 import io
 from crawler.topcv_crawler import TopCVCrawler
 from database.db_handler import DBHandler
+from geocoding import geocoder
+import pandas as pd
 
 sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8")
 
@@ -65,9 +67,15 @@ def test_topcv_crawler():
                 else:
                     jobs_data.append(vars(j))
 
+            # Chạy Geocoding để lấy tọa độ trước khi lưu
+            print("🌍 Đang chạy Geocoding (Lấy tọa độ)...")
+            df = pd.DataFrame(jobs_data)
+            df = geocoder.geocode_dataframe(df)
+            jobs_data_with_geo = df.to_dict("records")
+
             db = DBHandler()
             if db.connect():
-                stats = db.insert_jobs(jobs_data)
+                stats = db.insert_jobs(jobs_data_with_geo)
                 print(
                     f"✨ Kết quả lưu DB: Inserted: {stats['inserted']}, Skipped: {stats['skipped']}, Errors: {stats['errors']}"
                 )

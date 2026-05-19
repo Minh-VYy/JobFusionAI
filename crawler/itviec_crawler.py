@@ -24,10 +24,12 @@ class ITviecCrawler(BaseCrawler):
     # CRAWL CHÍNH
     # ============================================================
 
-    def crawl(self) -> list[JobModel]:
+    def crawl(self, progress_callback=None) -> list[JobModel]:
         self.start()
         try:
             for page_num in range(1, self.max_pages + 1):
+                if progress_callback:
+                    progress_callback(page_num, self.max_pages, len(self.jobs))
                 logger.info(f"📄 ITviec - Trang {page_num}/{self.max_pages}")
                 url = f"{self.BASE_URL}?page={page_num}"
                 if not self.goto(url):
@@ -318,8 +320,10 @@ class ITviecCrawler(BaseCrawler):
                 el = soup.select_one(sel)
                 if el:
                     salary_text = el.get_text(strip=True)
-                    # Bỏ "You'll love it" (salary ẩn)
-                    if "love" not in salary_text.lower():
+                    # Nếu salary bị ẩn (vd: You'll love it) -> Đặt là Thỏa thuận
+                    if "love" in salary_text.lower() or "thỏa thuận" in salary_text.lower():
+                        job.salary = "Thỏa thuận"
+                    else:
                         job.salary = salary_text
                     break
 
@@ -570,17 +574,52 @@ class ITviecCrawler(BaseCrawler):
                     job.phone = phone_match.group(1)
 
             # ── Posted Date ────────────────────────────────────
-            for sel in [
+            # ITviec hiển thị dạng: "Posted 2 days ago", "Đăng 3 ngày trước"
+            # Hoặc ngày cụ thể: "18/05/2026"
+            date_selectors = [
+                ".preview-job-header time",
+                "time[datetime]",
+                ".preview-job-overview time",
+                ".itr-created-at",
+                ".job-details__posted-date time",
                 ".job-details__posted-date span",
-                ".posted-date",
+                ".posted-date time",
+                ".posted-date span",
                 "span[class*='posted']",
-            ]:
+                "span[class*='date']",
+                "div[class*='posted-date']",
+                ".created-at",
+            ]
+            for sel in date_selectors:
                 el = soup.select_one(sel)
                 if el:
-                    job.posted_date = self._parse_relative_date(
-                        el.get_text(strip=True)
-                    )
-                    break
+                    # Ưu tiên lấy attribute datetime (ISO format chính xác nhất)
+                    datetime_attr = el.get("datetime", "")
+                    if datetime_attr:
+                        job.posted_date = self._parse_iso_or_relative(datetime_attr)
+                    else:
+                        raw_text = el.get_text(strip=True)
+                        if raw_text:
+                            job.posted_date = self._parse_relative_date(raw_text)
+                    if job.posted_date:
+                        break
+
+            # Fallback đọc text thủ công từ các thẻ con trong header/overview
+            if not job.posted_date:
+                for sel in [".preview-job-overview", ".job-details__header", ".preview-job-wrapper", ".job-details"]:
+                    parent_el = soup.select_one(sel)
+                    if parent_el:
+                        for text_el in parent_el.find_all(["span", "div", "p", "time"]):
+                            txt = text_el.get_text(strip=True).lower()
+                            if "posted" in txt or "đăng" in txt or "ago" in txt or "trước" in txt or "hôm nay" in txt:
+                                # Tránh các dòng quá dài không phải date
+                                if len(txt) < 40 and not "việc làm" in txt and not "job" in txt:
+                                    parsed = self._parse_relative_date(txt)
+                                    if parsed:
+                                        job.posted_date = parsed
+                                        break
+                        if job.posted_date:
+                            break
 
             # Bổ sung thuật toán đọc free-text (cách dài hạn nhưng áp dụng ngay)
             self._fill_missing_fields_from_text(job)
@@ -734,21 +773,59 @@ class ITviecCrawler(BaseCrawler):
         )
         return match.group(1) if match else None
 
+    def _parse_iso_or_relative(self, text: str) -> str:
+        """Parse ISO datetime string (datetime attribute) hoặc relative text."""
+        if not text:
+            return ""
+        text = text.strip()
+        # ISO 8601: 2026-05-18T10:30:00Z hoặc 2026-05-18
+        m = re.match(r"(\d{4}-\d{2}-\d{2})", text)
+        if m:
+            return m.group(1)
+        return self._parse_relative_date(text)
+
     def _parse_relative_date(self, rel_text: str) -> str:
         now = datetime.now()
+        if not rel_text:
+            return ""
         try:
-            match = re.search(r"\d+", rel_text)
-            if not match:
-                return now.strftime("%Y-%m-%d")
-            num = int(match.group())
-            if "hour" in rel_text:
+            text = rel_text.strip().lower()
+
+            # Thử parse ngày cụ thể trước: dd/mm/yyyy, dd-mm-yyyy
+            m = re.search(r"(\d{1,2})[/-](\d{1,2})[/-](\d{4})", text)
+            if m:
+                return datetime(
+                    int(m.group(3)), int(m.group(2)), int(m.group(1))
+                ).strftime("%Y-%m-%d")
+
+            # ISO 2026-05-18
+            m = re.search(r"(\d{4})-(\d{2})-(\d{2})", text)
+            if m:
+                return m.group(0)
+
+            # Relative: tìm số
+            num_match = re.search(r"(\d+)", text)
+            num = int(num_match.group(1)) if num_match else 1
+
+            # Tiếng Việt + tiếng Anh
+            if any(w in text for w in ["giờ", "hour", "hr"]):
                 date = now - timedelta(hours=num)
-            elif "day" in rel_text:
+            elif any(w in text for w in ["ngày", "day"]):
                 date = now - timedelta(days=num)
-            elif "week" in rel_text:
+            elif any(w in text for w in ["tuần", "week"]):
                 date = now - timedelta(weeks=num)
-            else:
+            elif any(w in text for w in ["tháng", "month"]):
+                date = now - timedelta(days=num * 30)
+            elif any(w in text for w in ["năm", "year"]):
+                date = now - timedelta(days=num * 365)
+            elif "hôm nay" in text or "today" in text or "just now" in text or "vừa" in text:
                 date = now
+            elif "hôm qua" in text or "yesterday" in text:
+                date = now - timedelta(days=1)
+            else:
+                # Không xác định được thì trả về rỗng để tránh lưu sai
+                return ""
+
             return date.strftime("%Y-%m-%d")
         except Exception:
-            return now.strftime("%Y-%m-%d")
+            return ""

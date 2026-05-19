@@ -3,6 +3,7 @@ from bs4 import BeautifulSoup
 from crawler.base_crawler import BaseCrawler, logger
 from models.job_model import JobModel
 import re
+from datetime import datetime, timedelta
 
 
 class VietnamWorksCrawler(BaseCrawler):
@@ -18,10 +19,12 @@ class VietnamWorksCrawler(BaseCrawler):
         self.max_pages = max_pages
         self.jobs = []
 
-    def crawl(self) -> list[JobModel]:
+    def crawl(self, progress_callback=None) -> list[JobModel]:
         self.start()
         try:
             for page_num in range(1, self.max_pages + 1):
+                if progress_callback:
+                    progress_callback(page_num, self.max_pages, len(self.jobs))
                 logger.info(
                     f"📄 VietnamWorks - Crawl trang {page_num}/{self.max_pages}"
                 )
@@ -150,56 +153,81 @@ class VietnamWorksCrawler(BaseCrawler):
             soup = BeautifulSoup(detail_html, "lxml")
 
             # --- Description & Requirements ---
-            def extract_section_content(heading_regex, stop_regex=r"Yêu cầu công|Phúc lợi|Địa điểm|Từ khoá|Kỹ năng"):
-                headings = soup.find_all(string=re.compile(heading_regex, re.IGNORECASE))
+            def extract_section_content(
+                heading_regex,
+                stop_regex=r"Yêu cầu công|Phúc lợi|Địa điểm|Từ khoá|Kỹ năng",
+            ):
+                headings = soup.find_all(
+                    string=re.compile(heading_regex, re.IGNORECASE)
+                )
                 heading = None
                 for h in headings:
                     htext = h.strip().lower()
-                    if len(htext) < 35 and "tìm kiếm" not in htext and "nhập" not in htext and "tất cả" not in htext:
+                    if (
+                        len(htext) < 35
+                        and "tìm kiếm" not in htext
+                        and "nhập" not in htext
+                        and "tất cả" not in htext
+                    ):
                         heading = h
                         break
-                if not heading: return ""
-                
+                if not heading:
+                    return ""
+
                 # Leo lên DOM để tìm container chứa nội dung (có sibling)
                 parent = heading.parent
                 curr = None
-                while parent and parent.name not in ['body', 'html', 'main']:
+                while parent and parent.name not in ["body", "html", "main"]:
                     sib = parent.find_next_sibling()
                     if sib:
                         curr = sib
                         break
                     parent = parent.parent
-                
-                if not curr: return ""
-                
+
+                if not curr:
+                    return ""
+
                 content = []
                 # Duyệt các thẻ anh em cho đến khi gặp heading khác
                 while curr:
                     text_preview = curr.get_text(strip=True)[:50]
-                    if curr.name in ['h2', 'h3', 'h4'] or re.search(stop_regex, text_preview, re.IGNORECASE):
+                    if curr.name in ["h2", "h3", "h4"] or re.search(
+                        stop_regex, text_preview, re.IGNORECASE
+                    ):
                         break
-                    
+
                     text = curr.get_text(separator="\n", strip=True)
                     # Bỏ qua các đoạn text rác như "Mức độ phù hợp..."
                     if text and "Mức độ phù hợp" not in text:
                         content.append(text)
                     curr = curr.find_next_sibling()
-                
+
                 return "\n".join(content).strip()
 
-            job.description = extract_section_content(r"^(Mô tả công việc|Job Description)$")
-            job.requirements = extract_section_content(r"^(Yêu cầu công việc|Job Requirements|Requirements)$")
+            job.description = extract_section_content(
+                r"^(Mô tả công việc|Job Description)$"
+            )
+            job.requirements = extract_section_content(
+                r"^(Yêu cầu công việc|Job Requirements|Requirements)$"
+            )
 
             # Fallback
             if not job.description:
                 desc_el = soup.select_one(".job-description, .description")
-                if desc_el: job.description = desc_el.get_text(separator="\n", strip=True)
+                if desc_el:
+                    job.description = desc_el.get_text(separator="\n", strip=True)
             if not job.requirements:
                 req_el = soup.select_one(".job-requirements, .requirements")
-                if req_el: job.requirements = req_el.get_text(separator="\n", strip=True)
+                if req_el:
+                    job.requirements = req_el.get_text(separator="\n", strip=True)
 
             # --- Trích xuất từ bảng "Thông tin việc làm" ---
-            info_labels = soup.find_all(string=re.compile(r"^(CẤP BẬC|NGÀNH NGHỀ|KỸ NĂNG|LĨNH VỰC|SỐ NĂM KINH NGHIỆM TỐI THIỂU|HÌNH THỨC LÀM VIỆC|LOẠI HÌNH CÔNG VIỆC|LOẠI HÌNH LÀM VIỆC)$", re.IGNORECASE))
+            info_labels = soup.find_all(
+                string=re.compile(
+                    r"^(NGÀY ĐĂNG|CẤP BẬC|NGÀNH NGHỀ|KỸ NĂNG|LĨNH VỰC|SỐ NĂM KINH NGHIỆM TỐI THIỂU|HÌNH THỨC LÀM VIỆC|LOẠI HÌNH CÔNG VIỆC|LOẠI HÌNH LÀM VIỆC)$",
+                    re.IGNORECASE,
+                )
+            )
             for label in info_labels:
                 label_text = label.get_text(strip=True).upper()
                 container = label.find_parent(["div", "li"])
@@ -210,10 +238,13 @@ class VietnamWorksCrawler(BaseCrawler):
                         if len(texts) >= 2 and label_text in texts[0].upper():
                             val = ", ".join(texts[1:])
                             if "KỸ NĂNG" in label_text:
-                                if job.skills is None: job.skills = []
+                                if job.skills is None:
+                                    job.skills = []
                                 for s in val.split(","):
                                     st = s.strip()
-                                    if st and not any(st.lower() == us.lower() for us in job.skills):
+                                    if st and not any(
+                                        st.lower() == us.lower() for us in job.skills
+                                    ):
                                         job.skills.append(st)
                             elif "NGÀNH NGHỀ" in label_text or "LĨNH VỰC" in label_text:
                                 job.industry = val
@@ -221,28 +252,117 @@ class VietnamWorksCrawler(BaseCrawler):
                                 job.experience_year = val + " năm"
                             elif "HÌNH THỨC" in label_text or "LOẠI HÌNH" in label_text:
                                 job.job_type = val
+                            elif "NGÀY ĐĂNG" in label_text:
+                                # val có dạng "06/05/2026" hoặc ISO
+                                if not job.posted_date:
+                                    job.posted_date = self._parse_posted_date(val)
 
             # Quét Kỹ năng bằng tag HTML nếu bảng trên không có
             if job.skills is None:
                 job.skills = []
-                skill_els = soup.select("span[class*='skill'], a[class*='skill'], span[class*='tag']")
+                skill_els = soup.select(
+                    "span[class*='skill'], a[class*='skill'], span[class*='tag']"
+                )
                 for s in skill_els:
                     st = s.get_text(strip=True)
-                    if st and len(st) > 1 and not any(st.lower() == us.lower() for us in job.skills):
+                    if (
+                        st
+                        and len(st) > 1
+                        and not any(st.lower() == us.lower() for us in job.skills)
+                    ):
                         job.skills.append(st)
 
             # --- Địa điểm làm việc (Location) ---
-            loc_text = extract_section_content(r"^(Địa điểm làm việc|Địa điểm|Location|Work location)$", r"Từ khoá|Keywords")
+            loc_text = extract_section_content(
+                r"^(Địa điểm làm việc|Địa điểm|Location|Work location)$",
+                r"Từ khoá|Keywords",
+            )
             if loc_text and len(loc_text) > 5:
                 job.location = re.sub(r"[\n\r]+", ", ", loc_text).strip()
 
             # Fallback cho Location dùng CSS Selector nếu hàm trên không ăn
-            if not job.location or "₫" in job.location or "tr/tháng" in job.location or "tất cả" in job.location.lower():
-                loc_el = soup.select_one(".company-location, .job-location, .location, .address")
+            if (
+                not job.location
+                or "₫" in job.location
+                or "tr/tháng" in job.location
+                or "tất cả" in job.location.lower()
+            ):
+                loc_el = soup.select_one(
+                    ".company-location, .job-location, .location, .address"
+                )
                 if loc_el:
                     ltext = loc_el.get_text(separator=", ", strip=True)
-                    if ltext and len(ltext) > 5 and "₫" not in ltext and "tháng" not in ltext:
+                    if (
+                        ltext
+                        and len(ltext) > 5
+                        and "₫" not in ltext
+                        and "tháng" not in ltext
+                    ):
                         job.location = ltext
+
+            # ── Posted Date từ detail page ──────────────────────
+            # VietnamWorks hiển thị: "Ngày đăng: 18/05/2026" hoặc dạng ISO
+            date_selectors = [
+                "time[datetime]",
+                "span[class*='date']",
+                "span[class*='posted']",
+                "div[class*='posted-date']",
+                ".job-detail-info__posted-date",
+                ".posted-date",
+            ]
+            if not job.posted_date:
+                for sel in date_selectors:
+                    el = soup.select_one(sel)
+                    if el:
+                        datetime_attr = el.get("datetime", "")
+                        if datetime_attr:
+                            pd = self._parse_posted_date(datetime_attr)
+                        else:
+                            pd = self._parse_posted_date(el.get_text(strip=True))
+                        if pd:
+                            job.posted_date = pd
+                            break
+
+            # Fallback: tìm label "Ngày đăng"
+            if not job.posted_date:
+                date_label = soup.find(string=re.compile(r"Ngày đăng|Posted date|Ngày cập nhật", re.IGNORECASE))
+                if date_label:
+                    parent = date_label.find_parent(["div", "span", "li", "td"])
+                    if parent:
+                        sib = parent.find_next_sibling(["div", "span", "strong", "p", "td"])
+                        if sib:
+                            pd = self._parse_posted_date(sib.get_text(strip=True))
+                            if pd:
+                                job.posted_date = pd
+
+            # ── Deadline (Hạn nộp hồ sơ) ─────────────────────────────
+            # Ví dụ: "Hết hạn trong 11 ngày", "Hạn nộp hồ sơ"
+            deadline_label = soup.find(string=re.compile(r"Hết hạn|Hạn nộp|Deadline", re.IGNORECASE))
+            if deadline_label:
+                # Nếu text nằm luôn trong thẻ hiện tại (VD: "Hết hạn trong 11 ngày")
+                dl_text = deadline_label.get_text(strip=True)
+                dl = self._parse_deadline_date(dl_text)
+                if dl:
+                    job.deadline = dl
+                else:
+                    # Nếu text ở thẻ liền kề
+                    parent = deadline_label.find_parent(["div", "span", "li", "td"])
+                    if parent:
+                        sib = parent.find_next_sibling(["div", "span", "strong", "p", "td"])
+                        if sib:
+                            dl = self._parse_deadline_date(sib.get_text(strip=True))
+                            if dl:
+                                job.deadline = dl
+
+            # Thử lấy deadline từ thẻ có chứa "Hết hạn" trong nội dung html
+            if not job.deadline:
+                for el in soup.find_all(["span", "div"]):
+                    txt = el.get_text(strip=True).lower()
+                    if "hết hạn trong" in txt or "expires in" in txt:
+                        dl = self._parse_deadline_date(txt)
+                        if dl:
+                            job.deadline = dl
+                            break
 
             # Smart Parser: Đọc free-text để điền các ô còn trống
             self._fill_missing_fields_from_text(job)
@@ -253,15 +373,21 @@ class VietnamWorksCrawler(BaseCrawler):
     def _fill_missing_fields_from_text(self, job: JobModel):
         """Smart Parser: Đọc free-text để vét thông tin bị thiếu."""
         full_text = f"{job.title or ''} {job.requirements or ''} {job.description or ''}".lower()
-        if not full_text.strip(): return
+        if not full_text.strip():
+            return
 
         # 1. Experience Year
         if not job.experience_year or "kinh nghiệm" in job.experience_year.lower():
             job.experience_year = ""
-            exp_match = re.search(r"(từ\s*\d+\s*(?:-|đến|to)\s*\d+\s*(?:năm|year)|(?:ít nhất|at least)?\s*\d+\+?\s*(?:năm|year)s?\s*(?:of\s*)?(?:kinh nghiệm|experience))", full_text)
+            exp_match = re.search(
+                r"(từ\s*\d+\s*(?:-|đến|to)\s*\d+\s*(?:năm|year)|(?:ít nhất|at least)?\s*\d+\+?\s*(?:năm|year)s?\s*(?:of\s*)?(?:kinh nghiệm|experience))",
+                full_text,
+            )
             if exp_match:
                 job.experience_year = exp_match.group(1).title()
-            elif re.search(r"(không yêu cầu kinh nghiệm|no experience required|fresher)", full_text):
+            elif re.search(
+                r"(không yêu cầu kinh nghiệm|no experience required|fresher)", full_text
+            ):
                 job.experience_year = "Không yêu cầu kinh nghiệm"
 
         # 2. Education
@@ -285,18 +411,40 @@ class VietnamWorksCrawler(BaseCrawler):
         # 4. Skills
         if not job.skills:
             job.skills = []
-        common_skills = ["python", "java", "javascript", "react", "node.js", "c#", ".net", "sql", "aws", "docker", "php", "vue", "angular"]
+        common_skills = [
+            "python",
+            "java",
+            "javascript",
+            "react",
+            "node.js",
+            "c#",
+            ".net",
+            "sql",
+            "aws",
+            "docker",
+            "php",
+            "vue",
+            "angular",
+        ]
         for skill in common_skills:
             if re.search(r"\b" + re.escape(skill) + r"\b", full_text):
                 if not any(skill.lower() == s.lower() for s in job.skills):
-                    job.skills.append(skill.upper() if len(skill) <= 3 else skill.title())
-                    
+                    job.skills.append(
+                        skill.upper() if len(skill) <= 3 else skill.title()
+                    )
+
         # 5. Industry
         if not job.industry:
             job.industry = "IT / Software"
 
         # 6. Salary
-        if not job.salary or job.salary.lower() in ["thỏa thuận", "thoả thuận", "thương lượng", "negotiable", "thương lượng (thỏa thuận)"]:
+        if not job.salary or job.salary.lower() in [
+            "thỏa thuận",
+            "thoả thuận",
+            "thương lượng",
+            "negotiable",
+            "thương lượng (thỏa thuận)",
+        ]:
             sal_patterns = [
                 r"(\$[\d,\.]+\s*(?:-|to|đến|~)\s*\$[\d,\.]+)",
                 r"([\d,\.]+\s*(?:-|to|đến|~)\s*[\d,\.]+\s*(?:usd|triệu|tr|vnđ|vnd|k))",
@@ -308,6 +456,86 @@ class VietnamWorksCrawler(BaseCrawler):
                 if sal_match:
                     job.salary = sal_match.group(1).title()
                     break
+
+    def _parse_posted_date(self, text: str) -> str:
+        """Parse ngày đăng bài VietnamWorks - hỗ trợ nhiều format."""
+        if not text:
+            return ""
+        text = text.strip()
+        text_lower = text.lower()
+
+        # ISO 8601: 2026-05-18T... hoặc 2026-05-18
+        m = re.match(r"(\d{4}-\d{2}-\d{2})", text)
+        if m:
+            return m.group(1)
+
+        # dd/mm/yyyy hoặc dd-mm-yyyy
+        m = re.search(r"(\d{1,2})[/-](\d{1,2})[/-](\d{4})", text)
+        if m:
+            try:
+                return datetime(
+                    int(m.group(3)), int(m.group(2)), int(m.group(1))
+                ).strftime("%Y-%m-%d")
+            except ValueError:
+                pass
+
+        # Relative date
+        now = datetime.now()
+        num_match = re.search(r"(\d+)", text_lower)
+        num = int(num_match.group(1)) if num_match else 1
+
+        if any(w in text_lower for w in ["giờ", "hour", "hr"]):
+            return (now - timedelta(hours=num)).strftime("%Y-%m-%d")
+        elif any(w in text_lower for w in ["ngày", "day"]):
+            return (now - timedelta(days=num)).strftime("%Y-%m-%d")
+        elif any(w in text_lower for w in ["tuần", "week"]):
+            return (now - timedelta(weeks=num)).strftime("%Y-%m-%d")
+        elif any(w in text_lower for w in ["tháng", "month"]):
+            return (now - timedelta(days=num * 30)).strftime("%Y-%m-%d")
+        elif any(w in text_lower for w in ["hôm nay", "today", "just now", "vừa"]):
+            return now.strftime("%Y-%m-%d")
+        elif any(w in text_lower for w in ["hôm qua", "yesterday"]):
+            return (now - timedelta(days=1)).strftime("%Y-%m-%d")
+
+        return ""
+
+    def _parse_deadline_date(self, text: str) -> str:
+        """Parse ngày hết hạn VietnamWorks - hỗ trợ format cụ thể và tương đối (tương lai)."""
+        if not text:
+            return ""
+        text = text.strip()
+        text_lower = text.lower()
+
+        # ISO 8601
+        m = re.match(r"(\d{4}-\d{2}-\d{2})", text)
+        if m:
+            return m.group(1)
+
+        # dd/mm/yyyy
+        m = re.search(r"(\d{1,2})[/-](\d{1,2})[/-](\d{4})", text)
+        if m:
+            try:
+                return datetime(
+                    int(m.group(3)), int(m.group(2)), int(m.group(1))
+                ).strftime("%Y-%m-%d")
+            except ValueError:
+                pass
+
+        # Relative future date (vd: "Hết hạn trong 11 ngày")
+        now = datetime.now()
+        num_match = re.search(r"(\d+)", text_lower)
+        num = int(num_match.group(1)) if num_match else 1
+
+        if any(w in text_lower for w in ["giờ", "hour", "hr"]):
+            return (now + timedelta(hours=num)).strftime("%Y-%m-%d")
+        elif any(w in text_lower for w in ["ngày", "day"]):
+            return (now + timedelta(days=num)).strftime("%Y-%m-%d")
+        elif any(w in text_lower for w in ["tuần", "week"]):
+            return (now + timedelta(weeks=num)).strftime("%Y-%m-%d")
+        elif any(w in text_lower for w in ["tháng", "month"]):
+            return (now + timedelta(days=num * 30)).strftime("%Y-%m-%d")
+
+        return ""
 
     def parse_single_job(self, card) -> JobModel:
         job = JobModel(source=self.SOURCE_NAME)
@@ -432,10 +660,14 @@ class VietnamWorksCrawler(BaseCrawler):
             if s.get_text(strip=True) and len(s.get_text(strip=True)) > 1
         ][:10]  # Giới hạn max 10 skills
 
-        # --- Posted Date ---
-        date_el = card.select_one("span[class*='date'], span[class*='time']")
+        # --- Posted Date (từ listing card) ---
+        date_el = card.select_one("time[datetime], span[class*='date'], span[class*='time']")
         if date_el:
-            job.posted_date = date_el.get_text(strip=True)
+            datetime_attr = date_el.get("datetime", "")
+            if datetime_attr:
+                job.posted_date = self._parse_posted_date(datetime_attr)
+            else:
+                job.posted_date = self._parse_posted_date(date_el.get_text(strip=True))
 
         return job
 
