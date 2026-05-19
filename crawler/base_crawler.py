@@ -181,6 +181,50 @@ class BaseCrawler:
 
         logger.info(f"✅ Browser ảo sẵn sàng | UA: {ua[:60]}... | VP: {vp['width']}x{vp['height']}")
 
+    def _clean_chrome_cache(self):
+        """Dọn dẹp các thư mục cache của ChromeProfile mà không làm mất trạng thái đăng nhập"""
+        import os
+        
+        profile_dir = r"C:\ChromeProfile"
+        if not os.path.exists(profile_dir):
+            return
+
+        cache_targets = [
+            r"Default\Cache",
+            r"Default\Code Cache",
+            r"Default\GPUCache",
+            r"Default\Service Worker\CacheStorage",
+            r"Default\Service Worker\ScriptCache",
+            r"Default\Storage\ext",
+            r"Crashpad",
+            r"ShaderCache",
+        ]
+
+        logger.info("🧹 Đang tự động dọn dẹp bộ nhớ đệm Chrome để giảm dung lượng ổ đĩa...")
+        freed = 0
+        for target in cache_targets:
+            target_path = os.path.join(profile_dir, target)
+            if os.path.exists(target_path):
+                # Duyệt qua các tệp tin để xóa các file không bị lock
+                for root, dirs, files in os.walk(target_path, topdown=False):
+                    for file in files:
+                        fp = os.path.join(root, file)
+                        try:
+                            sz = os.path.getsize(fp)
+                            os.remove(fp)
+                            freed += sz
+                        except Exception:
+                            # File bị lock bởi Chrome đang hoạt động, bỏ qua an toàn
+                            pass
+                    for d in dirs:
+                        dp = os.path.join(root, d)
+                        try:
+                            os.rmdir(dp)
+                        except Exception:
+                            pass
+        if freed > 0:
+            logger.info(f"✅ Tự động dọn dẹp Chrome hoàn tất! Đã giải phóng: {freed / (1024*1024):.2f} MB")
+
     def stop(self):
         """Đóng/Ngắt kết nối browser, giải phóng memory"""
         # Luôn đóng tab hiện tại để tránh lưu rác/nhiều tab mở
@@ -204,6 +248,13 @@ class BaseCrawler:
         if self.playwright:
             self.playwright.stop()
         logger.info("🛑 Playwright cleanup hoàn tất")
+        
+        # Tự động dọn dẹp cache của Chrome sau khi đóng tab
+        if getattr(self, 'use_cdp', False):
+            try:
+                self._clean_chrome_cache()
+            except Exception as e:
+                logger.warning(f"⚠️ Không thể tự động dọn dẹp cache Chrome: {e}")
 
     def __enter__(self):
         self.start()
