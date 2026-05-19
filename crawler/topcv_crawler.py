@@ -23,9 +23,10 @@ class TopCVCrawler(BaseCrawler):
     BASE_URL = "https://www.topcv.vn/tim-viec-lam-it"
     SOURCE_NAME = "topcv"
 
-    def __init__(self, max_pages: int = 3, headless: bool = True):
+    def __init__(self, max_pages: int = 3, headless: bool = True, max_jobs: int = 10):
         super().__init__(headless=headless)
         self.max_pages = max_pages   # Số trang muốn crawl
+        self.max_jobs = max_jobs     # Số lượng job tối đa muốn lấy
         self.jobs = []               # Lưu kết quả
 
     # ==================== CRAWL DANH SÁCH ====================
@@ -52,14 +53,13 @@ class TopCVCrawler(BaseCrawler):
                 logger.info(f"   → Tìm thấy {len(page_jobs)} jobs trên trang")
 
                 for job in page_jobs:
-                    # RÚT GỌN CHỈ TEST 5 JOBS THEO YÊU CẦU ĐỂ TIẾT KIỆM THỜI GIAN
-                    if len(self.jobs) >= 5:
+                    if len(self.jobs) >= self.max_jobs:
                         break
                     if job.job_url:
                         self.extract_detail(job)
                     self.jobs.append(job)
 
-                if len(self.jobs) >= 5:
+                if len(self.jobs) >= self.max_jobs:
                     break
 
         finally:

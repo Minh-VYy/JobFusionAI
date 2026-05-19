@@ -572,16 +572,19 @@ const BOT_CONFIG_DEFAULT = {
     topcv: {
         enabled: true,
         max_pages: 2,
+        max_jobs: 10,
         headless: true,
     },
     itviec: {
         enabled: true,
         max_pages: 1,
+        max_jobs: 10,
         headless: true,
     },
     vietnamworks: {
         enabled: true,
         max_pages: 2,
+        max_jobs: 10,
         headless: true,
     },
 };
@@ -651,20 +654,24 @@ async function fetchBotConfig() {
         const learnField = document.getElementById('cfg-learn-from-admin');
         if (moderationModeField) moderationModeField.value = facebook.moderation_policy?.mode || 'manual';
         if (learnField) learnField.checked = facebook.moderation_policy?.learn_from_admin !== false;
+        setInputValue('cfg-auto-approve-hours', facebook.moderation_policy?.auto_approve_after_hours || '');
 
         const topcv = getSourceConfig('topcv');
         setCheckboxValue('cfg-topcv-enabled', topcv.enabled !== false);
         setInputValue('cfg-topcv-max-pages', topcv.max_pages);
+        setInputValue('cfg-topcv-max-jobs', topcv.max_jobs || 10);
         setCheckboxValue('cfg-topcv-headless', topcv.headless !== false);
 
         const itviec = getSourceConfig('itviec');
         setCheckboxValue('cfg-itviec-enabled', itviec.enabled !== false);
         setInputValue('cfg-itviec-max-pages', itviec.max_pages);
+        setInputValue('cfg-itviec-max-jobs', itviec.max_jobs || 10);
         setCheckboxValue('cfg-itviec-headless', itviec.headless !== false);
 
         const vietnamworks = getSourceConfig('vietnamworks');
         setCheckboxValue('cfg-vietnamworks-enabled', vietnamworks.enabled !== false);
         setInputValue('cfg-vietnamworks-max-pages', vietnamworks.max_pages);
+        setInputValue('cfg-vietnamworks-max-jobs', vietnamworks.max_jobs || 10);
         setCheckboxValue('cfg-vietnamworks-headless', vietnamworks.headless !== false);
 
         renderFacebookGroups();
@@ -752,13 +759,16 @@ async function saveSourceConfig(source) {
         sourceConfig.moderation_policy = {
             mode: document.getElementById('cfg-moderation-mode') ? document.getElementById('cfg-moderation-mode').value : 'manual',
             learn_from_admin: document.getElementById('cfg-learn-from-admin') ? document.getElementById('cfg-learn-from-admin').checked : true,
+            auto_approve_after_hours: document.getElementById('cfg-auto-approve-hours') && document.getElementById('cfg-auto-approve-hours').value !== '' ? parseInt(document.getElementById('cfg-auto-approve-hours').value) : 0
         };
     } else {
         const enabledId = `cfg-${source}-enabled`;
         const pagesId = `cfg-${source}-max-pages`;
+        const jobsId = `cfg-${source}-max-jobs`;
         const headlessId = `cfg-${source}-headless`;
         sourceConfig.enabled = document.getElementById(enabledId) ? document.getElementById(enabledId).checked : true;
         sourceConfig.max_pages = parseInt(document.getElementById(pagesId).value) || sourceConfig.max_pages || 1;
+        sourceConfig.max_jobs = document.getElementById(jobsId) && document.getElementById(jobsId).value !== '' ? parseInt(document.getElementById(jobsId).value) : (sourceConfig.max_jobs || 10);
         sourceConfig.headless = document.getElementById(headlessId) ? document.getElementById(headlessId).checked : true;
     }
 

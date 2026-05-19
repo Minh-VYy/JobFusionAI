@@ -46,7 +46,8 @@ class FacebookDB:
         try:
             with open(config_path, "r", encoding="utf-8") as f:
                 config_data = json.load(f)
-            policy = config_data.get("moderation_policy") or {}
+            facebook_config = config_data.get("facebook") or {}
+            policy = facebook_config.get("moderation_policy") or config_data.get("moderation_policy") or {}
             mode = str(policy.get("mode", default_mode)).lower()
             return mode if mode in ("auto", "manual") else default_mode
         except Exception:
@@ -237,6 +238,40 @@ class FacebookDB:
         )
 
         self.conn.commit()
+
+    def get_group_rankings(self) -> list[dict]:
+        """Lấy danh sách group đã được chấm điểm để crawler ưu tiên khi chọn nguồn."""
+        try:
+            cursor = self.conn.cursor()
+            cursor.execute(
+                """
+                SELECT group_id, group_name, group_url, trust_score,
+                       spam_ratio, duplicate_ratio, crawl_priority,
+                       total_crawled, total_spam, total_duplicate,
+                       last_crawled, is_active
+                FROM facebook_groups
+                ORDER BY trust_score DESC, total_crawled DESC, last_crawled DESC
+                """
+            )
+            rows = cursor.fetchall()
+            columns = [
+                "group_id",
+                "group_name",
+                "group_url",
+                "trust_score",
+                "spam_ratio",
+                "duplicate_ratio",
+                "crawl_priority",
+                "total_crawled",
+                "total_spam",
+                "total_duplicate",
+                "last_crawled",
+                "is_active",
+            ]
+            return [dict(zip(columns, row)) for row in rows]
+        except Exception as e:
+            logger.warning(f"get_group_rankings failed: {e}")
+            return []
 
     def get_all_fingerprints(self) -> list:
         """Load tất cả external_id từ DB để dùng làm persistent duplicate cache."""

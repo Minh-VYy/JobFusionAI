@@ -64,6 +64,25 @@ Dự án được xây dựng theo mô hình pipeline khép kín kết hợp vò
 
 ---
 
+## 🧪 Quy trình kiểm duyệt & dạy bot
+
+Tab **Data Review & Active Learning** trong Admin Dashboard là nơi quản trị viên kiểm chứng dữ liệu crawler vừa thu thập:
+
+1. Chọn nguồn dữ liệu cần kiểm chứng bằng bộ lọc **Facebook / TopCV / ITViec / VietnamWorks**.
+2. Chọn trạng thái **Tất cả / Pending / Approved / Rejected** để tránh tình trạng dữ liệu đã cào nhưng không hiển thị do đang bị lọc.
+3. Bấm **Review** trên từng job để mở modal chi tiết.
+4. So sánh nội dung gốc bot cào được ở khung bên trái với dữ liệu AI bóc tách ở khung bên phải.
+5. Chỉnh các trường sai như tiêu đề, công ty, lương, địa chỉ, kỹ năng.
+6. Bấm **Duyệt & Dạy AI** để lưu dữ liệu đã sửa. Backend sẽ:
+   - Cập nhật bản ghi job sang trạng thái `approved`.
+   - Lưu từng thay đổi vào bảng `job_corrections`.
+   - Ghi nhớ entity đã xác thực vào `verified_entities` khi có đủ thông tin công ty + địa chỉ hoặc công ty + số điện thoại.
+7. Bấm **Từ Chối** nếu tin là spam, lừa đảo hoặc không phải tin tuyển dụng hợp lệ.
+
+Các badge nguồn trong bảng và trong modal có thể bấm được để nhảy nhanh sang đúng nguồn cần kiểm chứng. Frontend tự ưu tiên gọi API cùng origin hiện tại, sau đó fallback về `http://localhost:8000/api` để giảm lỗi `Failed to fetch` khi chạy dashboard ở môi trường local.
+
+---
+
 ## 📂 Cấu trúc thư mục
 
 ```text
@@ -139,14 +158,22 @@ Chạy script tạo bảng trong SQL Server bằng file [init_db.sql](file:///e:
   python main.py now
   ```
 
+- **Chạy riêng một nguồn crawler**:
+  ```bash
+  python main.py now facebook
+  python main.py now topcv
+  python main.py now itviec
+  python main.py now vietnamworks
+  ```
+
 ---
 
 ## 🛠️ Lộ trình triển khai Cơ chế Tự học (Active Learning Pipeline)
 
 1. [x] **Bước 1**: Thỏa thuận thiết kế & cập nhật tài liệu kiến trúc hệ thống (`README.md`).
-2. [ ] **Bước 2**: Xây dựng máy chủ **FastAPI Backend (`server.py`)** để kết nối hoàn chỉnh Dashboard Kiểm duyệt (`admin.html`) với SQL Server Database.
-3. [ ] **Bước 3**: Triển khai API `/api/admin/jobs/{id}/review` cho phép cập nhật dữ liệu sửa đổi của Quản trị viên và tự động lưu lịch sử sửa đổi vào bảng `job_corrections`.
-4. [ ] **Bước 4**: Tích hợp **Dynamic Memory Cache**: Khi duyệt tin, hệ thống tự động lưu cặp `(Phone, Company)` hoặc `(Address, Company)` hợp lệ. Crawler lần sau sẽ đối chiếu trước để tối ưu độ chính xác lên 100% cho các công ty quen thuộc.
+2. [x] **Bước 2**: Xây dựng máy chủ **FastAPI Backend (`server.py`)** để kết nối Dashboard Kiểm duyệt (`admin.html`) với SQL Server Database.
+3. [x] **Bước 3**: Triển khai API `/api/admin/jobs/{id}/review` cho phép cập nhật dữ liệu sửa đổi của Quản trị viên và tự động lưu lịch sử sửa đổi vào bảng `job_corrections`.
+4. [x] **Bước 4**: Tích hợp **Dynamic Memory Cache**: Khi duyệt tin, hệ thống tự động lưu cặp `(Phone, Company)` hoặc `(Address, Company)` hợp lệ để crawler các lần sau có thêm dữ liệu chuẩn đối chiếu.
 5. [ ] **Bước 5**: Viết Evaluation Script để tự động đánh giá độ chính xác (Accuracy, Precision, Recall) của bot dựa trên bộ dữ liệu đã được con người chuẩn hóa.
 
 ---

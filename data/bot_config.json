@@ -2,12 +2,9 @@
   "facebook": {
     "enabled": true,
     "max_posts_per_group": 5,
-    "max_groups_per_session": 3,
+    "max_groups_per_session": 1,
     "max_days_old": 3,
-    "moderation_policy": {
-      "mode": "manual",
-      "learn_from_admin": true
-    },
+    "group_selection_mode": "priority",
     "facebook_groups": [
       {
         "name": "VIỆC LÀM THỜI VỤ ĐÀ NẴNG GROUP",
@@ -45,7 +42,11 @@
         "name": "Hội Tìm Việc Làm Thêm Cho SV Đà Nẵng",
         "url": "https://www.facebook.com/groups/thichlamthemcom"
       }
-    ]
+    ],
+    "moderation_policy": {
+      "mode": "manual",
+      "learn_from_admin": true
+    }
   },
   "topcv": {
     "enabled": true,

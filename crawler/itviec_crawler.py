@@ -15,9 +15,10 @@ class ITviecCrawler(BaseCrawler):
     BASE_URL = "https://itviec.com/it-jobs"
     SOURCE_NAME = "itviec"
 
-    def __init__(self, max_pages: int = 1, headless: bool = True):
+    def __init__(self, max_pages: int = 1, headless: bool = True, max_jobs: int = 10):
         super().__init__(headless=headless)
         self.max_pages = max_pages
+        self.max_jobs = max_jobs
         self.jobs = []
 
     # ============================================================
@@ -50,7 +51,7 @@ class ITviecCrawler(BaseCrawler):
 
                 # Lấy các thẻ job card
                 cards = self.page.locator(".job-card")
-                count = min(cards.count(), 5) # CHỈ LẤY 5 DỮ LIỆU ĐỂ TEST
+                count = min(cards.count(), self.max_jobs)
                 logger.info(f"   👉 Sẽ test click {count} jobs từ list...")
 
                 if count == 0:

@@ -185,8 +185,12 @@ def run_pipeline(target_bot=None):
             source_name, "running", 0, 0, max_pages=max_pages
         )
         try:
+            max_jobs = source_config.get("max_jobs", 10)
+            logger.info(f"   ⚙️ Configured max_jobs: {max_jobs}")
             crawler = cfg["class"](
-                max_pages=max_pages, headless=source_config.get("headless", HEADLESS)
+                max_pages=max_pages,
+                headless=source_config.get("headless", HEADLESS),
+                max_jobs=max_jobs,
             )
 
             def make_progress_cb(src_name):

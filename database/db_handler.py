@@ -50,6 +50,9 @@ class DBHandler:
             self.conn.close()
             logger.info("🔌 Đã đóng kết nối SQL Server")
 
+    def close(self):
+        self.disconnect()
+
     def __enter__(self):
         self.connect()
         return self
@@ -86,8 +89,6 @@ class DBHandler:
         cursor = self.conn.cursor()
         stats = {"inserted": 0, "skipped": 0, "errors": 0}
         moderation_mode = self._get_moderation_mode()
-        job_status = "approved" if moderation_mode == "auto" else "pending"
-        needs_review = 0 if moderation_mode == "auto" else 1
 
         sql = """
         INSERT INTO jobs (
@@ -193,6 +194,14 @@ class DBHandler:
                                 deadline_val = _dt.strptime(s[:10], "%d/%m/%Y")
                             except ValueError:
                                 deadline_val = None
+
+                source_name_lower = str(job.get("source", "")).strip().lower()
+                if source_name_lower in ("topcv", "vietnamworks", "itviec"):
+                    job_status = "approved"
+                    needs_review = 0
+                else:
+                    job_status = "approved" if moderation_mode == "auto" else "pending"
+                    needs_review = 1 if moderation_mode == "manual" else 0
 
                 params = (
                     trunc(job.get("title"), 500),

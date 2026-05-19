@@ -148,9 +148,49 @@ def login(username: str = Form(...), password: str = Form(...)):
     )
 
 
+# --- API Admin: Tự Động Duyệt Tin Facebook Theo Thời Gian Chờ ---
+def check_and_perform_auto_approval():
+    try:
+        hours = 24  # Mặc định 24 giờ
+        if os.path.exists(BOT_CONFIG_PATH):
+            try:
+                with open(BOT_CONFIG_PATH, "r", encoding="utf-8") as f:
+                    config_data = json.load(f)
+                    facebook_config = config_data.get("facebook") or {}
+                    policy = facebook_config.get("moderation_policy") or {}
+                    hours = int(policy.get("auto_approve_after_hours", 24))
+            except Exception:
+                pass
+
+        if hours <= 0:
+            return  # Đã tắt tính năng tự động duyệt sau thời gian chờ
+
+        session = models.get_session()
+        try:
+            cutoff = datetime.utcnow() - timedelta(hours=hours)
+            # Tự động cập nhật các tin pending của Facebook quá hạn
+            updated_count = (
+                session.query(Job)
+                .filter(
+                    Job.source_name == "facebook",
+                    Job.status == "pending",
+                    Job.scraped_at <= cutoff,
+                )
+                .update({Job.status: "approved", Job.needs_review: False}, synchronize_session=False)
+            )
+            if updated_count > 0:
+                session.commit()
+                logger.info(f"⏰ Auto-Approved {updated_count} pending Facebook jobs older than {hours} hours.")
+        finally:
+            session.close()
+    except Exception as e:
+        logger.error(f"Error in check_and_perform_auto_approval: {e}")
+
+
 # --- API Admin: Thống Kê Tổng Quan (Stats) ---
 @app.get("/api/admin/stats")
 def get_admin_stats():
+    check_and_perform_auto_approval()
     session = models.get_session()
     try:
         total_jobs = session.query(Job).count()
@@ -212,21 +252,25 @@ BOT_CONFIG_DEFAULT = {
         "moderation_policy": {
             "mode": "manual",
             "learn_from_admin": True,
+            "auto_approve_after_hours": 24,
         },
     },
     "topcv": {
         "enabled": True,
         "max_pages": 2,
+        "max_jobs": 10,
         "headless": True,
     },
     "itviec": {
         "enabled": True,
         "max_pages": 1,
+        "max_jobs": 10,
         "headless": True,
     },
     "vietnamworks": {
         "enabled": True,
         "max_pages": 2,
+        "max_jobs": 10,
         "headless": True,
     },
 }
@@ -288,6 +332,9 @@ def _merge_bot_config(raw_config: Optional[dict]) -> dict:
                 merged_policy["mode"] = mode if mode in {"auto", "manual"} else "manual"
                 merged_policy["learn_from_admin"] = bool(
                     value.get("learn_from_admin", merged_policy["learn_from_admin"])
+                )
+                merged_policy["auto_approve_after_hours"] = int(
+                    value.get("auto_approve_after_hours", merged_policy.get("auto_approve_after_hours", 24))
                 )
                 continue
             section_defaults[key] = value
@@ -511,7 +558,10 @@ def delete_task(task_id: int):
 
 # --- API Admin: Kiểm Duyệt Việc Làm (Review / Active Learning) ---
 @app.get("/api/admin/jobs/review")
-def get_review_jobs(limit: int = 50):
+def get_review_jobs(
+    limit: int = 100, status: str = "all", source: Optional[str] = None
+):
+    check_and_perform_auto_approval()
     session = models.get_session()
     try:
         jobs = (

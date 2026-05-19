@@ -42,7 +42,7 @@ class BaseCrawler:
     - Context manager support
     """
 
-    def __init__(self, headless: bool = True, max_pages: int = 5, use_cdp: bool = True, cdp_url: str = "http://localhost:9222"):
+    def __init__(self, headless: bool = True, max_pages: int = 5, use_cdp: bool = False, cdp_url: str = "http://localhost:9222"):
         self.headless = headless
         self.max_pages = max_pages
         self.use_cdp = use_cdp
@@ -75,6 +75,7 @@ class BaseCrawler:
                 return
             except Exception as e:
                 logger.warning(f"⚠️ Không kết nối được trình duyệt thật ({e}). Mở trình duyệt ảo...")
+                self.use_cdp = False
 
         logger.info("🚀 Khởi động trình duyệt ảo (stealth mode)...")
         self.browser = self.playwright.chromium.launch(

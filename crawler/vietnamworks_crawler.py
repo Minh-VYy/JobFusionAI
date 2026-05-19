@@ -14,9 +14,10 @@ class VietnamWorksCrawler(BaseCrawler):
 
     SOURCE_NAME = "vietnamworks"
 
-    def __init__(self, max_pages: int = 3, headless: bool = True):
+    def __init__(self, max_pages: int = 3, headless: bool = True, max_jobs: int = 10):
         super().__init__(headless=headless)
         self.max_pages = max_pages
+        self.max_jobs = max_jobs
         self.jobs = []
 
     def crawl(self, progress_callback=None) -> list[JobModel]:
@@ -117,7 +118,7 @@ class VietnamWorksCrawler(BaseCrawler):
 
         logger.info(f"   → Parse {len(job_cards)} cards với click chi tiết...")
 
-        for idx, card in enumerate(job_cards[:5]):  # Chỉ lấy 5 job để test
+        for idx, card in enumerate(job_cards[: self.max_jobs]):
             try:
                 job = self.parse_single_job(card)
                 if job.title and job.job_url:

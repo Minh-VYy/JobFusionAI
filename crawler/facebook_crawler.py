@@ -72,6 +72,7 @@ def load_bot_config():
                 if isinstance(raw_config.get("facebook"), dict)
                 else raw_config
             )
+            config.setdefault("group_selection_mode", "priority")
             policy = config.get("moderation_policy") or {}
             mode = str(policy.get("mode", "manual")).lower()
             policy["mode"] = mode if mode in ("auto", "manual") else "manual"
@@ -84,6 +85,7 @@ def load_bot_config():
             "max_posts_per_group": 5,
             "max_groups_per_session": 1,
             "max_days_old": 3,
+            "group_selection_mode": "priority",
             "facebook_groups": [],
             "moderation_policy": {
                 "mode": "manual",
@@ -199,6 +201,12 @@ class CrawlStateManager:
         except (FileNotFoundError, json.JSONDecodeError):
             return {}
 
+    def _meta(self) -> Dict:
+        meta = self._state.setdefault("_meta", {})
+        meta.setdefault("rotation_cursor", 0)
+        meta.setdefault("rotation_day", "")
+        return meta
+
     def save(self):
         os.makedirs(os.path.dirname(self.path), exist_ok=True)
         with open(self.path, "w", encoding="utf-8") as f:
@@ -216,6 +224,21 @@ class CrawlStateManager:
         self._state[group_url]["seen_ids"] = list(existing)[-500:]
         self._state[group_url]["last_crawled"] = datetime.utcnow().isoformat()
         self.save()
+
+    def get_rotation_cursor(self) -> int:
+        return int(self._meta().get("rotation_cursor", 0) or 0)
+
+    def set_rotation_cursor(self, value: int):
+        self._meta()["rotation_cursor"] = max(0, int(value))
+        self.save()
+
+    def reset_rotation_if_new_day(self):
+        today = datetime.utcnow().date().isoformat()
+        meta = self._meta()
+        if meta.get("rotation_day") != today:
+            meta["rotation_day"] = today
+            meta["rotation_cursor"] = 0
+            self.save()
 
 
 # ================================================================
@@ -243,7 +266,12 @@ class FacebookCrawler:
         )
         self.hours_lookback = hours_lookback
         self.max_days_old = config.get("max_days_old", 3)
-        self.facebook_groups = config.get("facebook_groups", [])
+        self.group_selection_mode = str(
+            config.get("group_selection_mode", "priority")
+        ).lower()
+        if self.group_selection_mode not in {"priority", "random", "round_robin"}:
+            self.group_selection_mode = "priority"
+        self.facebook_groups = self._hydrate_groups(config.get("facebook_groups", []))
 
         self.cleaner = FacebookCleaner()
         self.nlp = FacebookNLP()
@@ -255,6 +283,47 @@ class FacebookCrawler:
         # Persistent caches
         self._load_fingerprints_from_db()
         self._load_cross_detector_baseline()
+
+    def _load_group_rankings(self) -> Dict[str, dict]:
+        rankings: Dict[str, dict] = {}
+        try:
+            with FacebookDB() as db:
+                rows = db.get_group_rankings()
+            for row in rows:
+                group_url = str(
+                    row.get("group_url") or row.get("group_id") or ""
+                ).strip()
+                if group_url:
+                    rankings[group_url] = row
+        except Exception as e:
+            logger.debug(f"[group_meta] Could not load group rankings: {e}")
+        return rankings
+
+    def _hydrate_groups(self, groups: List[dict]) -> List[dict]:
+        rankings = self._load_group_rankings()
+        hydrated: List[dict] = []
+        for index, group in enumerate(groups or []):
+            group_url = str(group.get("url", "")).strip()
+            meta = rankings.get(group_url, {})
+            crawl_priority = str(
+                meta.get("crawl_priority", group.get("priority", "normal"))
+            ).lower()
+            if crawl_priority not in {"high", "medium", "normal", "low"}:
+                crawl_priority = "normal"
+            hydrated.append(
+                {
+                    **group,
+                    "trust_score": float(
+                        meta.get("trust_score", group.get("trust_score", 0.5)) or 0.5
+                    ),
+                    "priority": crawl_priority,
+                    "is_active": bool(
+                        meta.get("is_active", group.get("is_active", True))
+                    ),
+                    "_source_index": index,
+                }
+            )
+        return hydrated
 
     # ============================================================
     # PERSISTENT DUPLICATE CACHE (Upgrade #6)
@@ -568,29 +637,31 @@ class FacebookCrawler:
 
             context = browser.contexts[0]
             page = context.new_page()
-            self._setup_page(page)
-
-            selected = self._select_groups()
-            logger.info(f"📋 Session: {len(selected)} groups")
-
-            for idx, group in enumerate(selected, 1):
-                if progress_callback:
-                    progress_callback(idx, len(selected), len(self.jobs))
-                try:
-                    group_jobs = self._crawl_single_group(page, group)
-                    self.jobs.extend(group_jobs)
-                    logger.info(f"✅ {group['name']}: +{len(group_jobs)} jobs")
-                except Exception as e:
-                    logger.error(f"❌ Error crawling {group['name']}: {e}")
-
-                if group != selected[-1]:
-                    self._human_delay(30, 75)
-
-            # Long-run stability: clear state giữa session
             try:
-                page.close()
-            except Exception:
-                pass
+                self._setup_page(page)
+
+                selected = self._select_groups()
+                logger.info(f"📋 Session: {len(selected)} groups")
+
+                for idx, group in enumerate(selected, 1):
+                    if progress_callback:
+                        progress_callback(idx, len(selected), len(self.jobs))
+                    try:
+                        group_jobs = self._crawl_single_group(page, group)
+                        self.jobs.extend(group_jobs)
+                        logger.info(f"✅ {group['name']}: +{len(group_jobs)} jobs")
+                    except Exception as e:
+                        logger.error(f"❌ Error crawling {group['name']}: {e}")
+
+                    if group != selected[-1]:
+                        self._human_delay(30, 75)
+            finally:
+                # Long-run stability: clear state giữa session
+                try:
+                    page.close()
+                    logger.info("🛑 Đã đóng tab Facebook Crawler thành công")
+                except Exception as e:
+                    logger.warning(f"⚠️ Không thể đóng tab Facebook Crawler: {e}")
 
         logger.info(f"🏁 Crawl finished: {len(self.jobs)} total jobs")
         return self.jobs
@@ -1302,16 +1373,79 @@ class FacebookCrawler:
         text = content.lower()
         return sum(1 for kw in SPAM_KEYWORDS if kw in text) >= 2
 
+    def _priority_sort_key(self, group: dict):
+        trust_score = float(group.get("trust_score", 0.5) or 0.5)
+        crawl_priority = str(group.get("priority", "normal")).lower()
+        priority_rank = {"high": 0, "medium": 1, "normal": 2, "low": 3}.get(
+            crawl_priority, 2
+        )
+        source_index = int(group.get("_source_index", 0) or 0)
+        return (-trust_score, priority_rank, source_index)
+
+    def _group_weight(self, group: dict) -> int:
+        trust_score = float(group.get("trust_score", 0.5) or 0.5)
+        crawl_priority = str(group.get("priority", "normal")).lower()
+        if crawl_priority == "high" or trust_score >= 0.8:
+            return 3
+        if crawl_priority == "medium" or trust_score >= 0.6:
+            return 2
+        return 1
+
+    def _expand_priority_groups(self, ordered_groups: List[dict]) -> List[dict]:
+        expanded: List[dict] = []
+        for group in ordered_groups:
+            expanded.extend([group] * self._group_weight(group))
+        return expanded or ordered_groups
+
+    def _rotate_groups(self, ordered_groups: List[dict]) -> List[dict]:
+        if not ordered_groups:
+            return []
+
+        self.state.reset_rotation_if_new_day()
+        cursor = self.state.get_rotation_cursor() % len(ordered_groups)
+        rotated = ordered_groups[cursor:] + ordered_groups[:cursor]
+        selected: List[dict] = []
+        seen_group_keys = set()
+        consumed = 0
+        max_selected = max(1, min(self.max_groups, len(rotated)))
+        for group in rotated:
+            consumed += 1
+            group_key = str(
+                group.get("url") or group.get("group_url") or group.get("name") or ""
+            )
+            if not group_key or group_key in seen_group_keys:
+                continue
+            selected.append(group)
+            seen_group_keys.add(group_key)
+            if len(selected) >= max_selected:
+                break
+
+        next_cursor = (cursor + consumed) % len(ordered_groups)
+        self.state.set_rotation_cursor(next_cursor)
+        logger.info(
+            f"📋 Facebook selection mode={self.group_selection_mode} | cursor={cursor} -> {next_cursor} | groups={len(selected)}"
+        )
+        return selected
+
     def _select_groups(self) -> List[dict]:
-        """Chọn groups theo priority, shuffle trong từng mức."""
-        high = [g for g in self.facebook_groups if g.get("priority") == "high"]
-        medium = [g for g in self.facebook_groups if g.get("priority") == "medium"]
-        low = [
-            g
-            for g in self.facebook_groups
-            if g.get("priority") not in ("high", "medium")
-        ]
-        random.shuffle(high)
-        random.shuffle(medium)
-        random.shuffle(low)
-        return (high + medium + low)[: self.max_groups]
+        """Chọn groups theo mode cấu hình: ưu tiên, ngẫu nhiên hoặc xoay vòng."""
+        active_groups = [g for g in self.facebook_groups if g.get("is_active", True)]
+        if not active_groups:
+            return []
+
+        if self.group_selection_mode == "random":
+            shuffled = active_groups[:]
+            random.shuffle(shuffled)
+            selected = shuffled[: max(1, min(self.max_groups, len(shuffled)))]
+            logger.info(f"📋 Facebook selection mode=random | groups={len(selected)}")
+            return selected
+
+        if self.group_selection_mode == "round_robin":
+            ordered = sorted(
+                active_groups, key=lambda g: int(g.get("_source_index", 0) or 0)
+            )
+        else:
+            ordered = sorted(active_groups, key=self._priority_sort_key)
+            ordered = self._expand_priority_groups(ordered)
+
+        return self._rotate_groups(ordered)

@@ -94,6 +94,7 @@ class Job(Base):
 
     source_url = Column(String(1000))
     source_name = Column(String(100))  # vietnamworks / topcv / itviec
+    source_type = Column(String(50))  # group_post / listing
     external_id = Column(String(200))  # ID gốc trên site nguồn
 
     job_type = Column(String(100))  # Full-time / Part-time / Remote
