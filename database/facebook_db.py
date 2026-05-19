@@ -15,10 +15,10 @@ class FacebookDB:
     def __init__(self):
         self.conn_str = (
             f"DRIVER={{{os.getenv('DB_DRIVER', 'ODBC Driver 17 for SQL Server')}}};"
-            f"SERVER={os.getenv('DB_SERVER', r'localhost\MVY_350')};"
-            f"DATABASE={os.getenv('DB_NAME', 'job_agent_db')};"
-            f"UID={os.getenv('DB_USER', 'sa')};"
-            f"PWD={os.getenv('DB_PASSWORD', '123456')};"
+            f"SERVER={os.getenv('DB_SERVER', r'THIEUQUANG')};"
+            f"DATABASE={os.getenv('DB_NAME', 'findJob')};"
+            f"UID={os.getenv('DB_USER', 'quang123')};"
+            f"PWD={os.getenv('DB_PASSWORD', '123')};"
             f"TrustServerCertificate=yes;"
         )
         self.conn = None

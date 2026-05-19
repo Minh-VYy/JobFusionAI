@@ -20,17 +20,17 @@ BASE_DIR = Path(__file__).resolve().parent
 # Lưu ý: dấu \ viết thành %5C trong URL, hoặc dùng ODBC_CONNECTION_STRING
 DATABASE_URL = os.getenv(
     "DATABASE_URL",
-    "mssql+pyodbc://chaut:YourPassword@CHAOOO%5CCHAUTRUONG/job_agent_db"
-    "?driver=ODBC+Driver+17+for+SQL+Server&TrustServerCertificate=yes",
+    "mssql+pyodbc://quang123:123@THIEUQUANG/findJob"
+    "?driver=ODBC+Driver+17+for+SQL+Server&TrustServerCertificate=yes"
 )
 
 # --- Hoặc dùng ODBC connection string trực tiếp (linh hoạt hơn) ---
 # Nếu DATABASE_URL không hoạt động, set biến này trong .env:
 # USE_ODBC_STRING=true
-# ODBC_CONNECTION_STRING=DRIVER={ODBC Driver 17 for SQL Server};SERVER=CHAOOO\CHAUTRUONG;DATABASE=job_agent_db;UID=chaut;PWD=MatKhau;TrustServerCertificate=yes;
-USE_ODBC_STRING = os.getenv("USE_ODBC_STRING", "false").lower() == "true"
-ODBC_CONN_STRING = os.getenv("ODBC_CONNECTION_STRING", "")
-REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379/0")
+# ODBC_CONNECTION_STRING=DRIVER={ODBC Driver 17 for SQL Server};SERVER=THIEUQUANG;DATABASE=findJob;UID=quang123;PWD=123;TrustServerCertificate=yes;
+USE_ODBC_STRING    = os.getenv("USE_ODBC_STRING", "false").lower() == "true"
+ODBC_CONN_STRING   = os.getenv("ODBC_CONNECTION_STRING", "")
+REDIS_URL    = os.getenv("REDIS_URL",    "redis://localhost:6379/0")
 
 # ── AI / LLM ──────────────────────────────────────────────────────────────────
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")

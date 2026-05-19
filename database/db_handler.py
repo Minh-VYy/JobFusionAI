@@ -19,11 +19,11 @@ class DBHandler:
     def __init__(self):
         self.conn_str = os.getenv("ODBC_CONNECTION_STRING")
         if not self.conn_str:
-            db_driver = os.getenv("DB_DRIVER", "ODBC Driver 17 for SQL Server")
-            db_server = os.getenv("DB_SERVER", r"localhost\MVY_350")
-            db_name = os.getenv("DB_NAME", "job_agent_db")
-            db_user = os.getenv("DB_USER", "sa")
-            db_password = os.getenv("DB_PASSWORD", "123456")
+            db_driver   = os.getenv('DB_DRIVER', 'ODBC Driver 17 for SQL Server')
+            db_server   = os.getenv('DB_SERVER', r'THIEUQUANG')
+            db_name     = os.getenv('DB_NAME', 'findJob')
+            db_user     = os.getenv('DB_USER', 'quang123')
+            db_password = os.getenv('DB_PASSWORD', '123')
             self.conn_str = (
                 f"DRIVER={{{db_driver}}};"
                 f"SERVER={db_server};"

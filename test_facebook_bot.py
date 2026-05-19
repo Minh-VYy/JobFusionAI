@@ -43,16 +43,12 @@ def run_test():
 
     # Bước 2: Khởi tạo Crawler với thiết lập test nhanh
     crawler = FacebookCrawler(
-        max_groups_per_session=1,
+        max_groups_per_session=2,
         max_posts_per_group=8  # Tăng lên 8 bài để test kỹ hơn
     )
     
     # 🎯 ÉP BOT CHẠY ĐÚNG LINK BẠN YÊU CẦU
-    target_url = "https://www.facebook.com/groups/360978689839999"
-    crawler._select_groups = lambda: [{"name": "Hội Tìm Việc Làm Thêm SV Đà Nẵng (Target Test)", "url": target_url}]
-    
-    logger.info(f"🎯 Đang nhắm mục tiêu: {target_url}")
-    logger.info("🚀 Đang khởi động Pipeline: Crawl -> NLP -> Filter -> Database...")
+
     
     start_time = time.time()
     try:
