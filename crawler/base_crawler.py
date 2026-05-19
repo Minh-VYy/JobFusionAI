@@ -192,8 +192,9 @@ class BaseCrawler:
                 pass
 
         if getattr(self, 'use_cdp', False) and hasattr(self, 'browser') and self.browser and self.browser.is_connected():
-            logger.info("🛑 Ngắt kết nối khỏi trình duyệt thật...")
-            self.browser.close() # Ngắt kết nối CDP, không đóng browser
+            logger.info("🛑 Ngắt kết nối khỏi trình duyệt thật (giữ Chrome luôn mở)...")
+            # KHÔNG gọi self.browser.close() vì sẽ tắt luôn cả ứng dụng Chrome của người dùng!
+            # Playwright sẽ tự động ngắt kết nối an toàn khi gọi playwright.stop()
         else:
             if self.context:
                 self.context.close()

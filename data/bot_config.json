@@ -58,13 +58,13 @@
   "itviec": {
     "enabled": true,
     "max_pages": 1,
-    "max_jobs": 10,
-    "headless": true
+    "max_jobs": 100,
+    "headless": false
   },
   "vietnamworks": {
     "enabled": true,
     "max_pages": 2,
-    "max_jobs": 10,
-    "headless": true
+    "max_jobs": 100,
+    "headless": false
   }
 }
