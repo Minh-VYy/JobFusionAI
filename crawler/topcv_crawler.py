@@ -158,8 +158,17 @@ class TopCVCrawler(BaseCrawler):
                         self.extract_detail(job)
                     self.jobs.append(job)
 
+                    # ✅ Delay tự nhiên giữa mỗi job (3-7s) — tránh bị detect
+                    if len(self.jobs) < self.max_jobs and job != page_jobs[-1]:
+                        self.human_sleep(3.0, 7.0)
+
                 if len(self.jobs) >= self.max_jobs:
                     break
+
+                # ✅ Delay dài giữa mỗi trang (8-15s) — giống người thật chuyển trang
+                if page_num < self.max_pages:
+                    logger.info(f"   ⏳ Đợi trước khi sang trang tiếp theo...")
+                    self.human_sleep(8.0, 15.0)
 
         finally:
             self.stop()
@@ -252,8 +261,8 @@ class TopCVCrawler(BaseCrawler):
         """Extract chi tiết từ trang detail (Mô tả, Yêu cầu, Lĩnh vực, Hình thức)"""
         try:
             logger.info(f"   → Đang lấy chi tiết: {job.title}")
-            self.goto(job.job_url)
-            self.human_sleep(1, 2)
+            self.goto(job.job_url, wait_after=3.5)  # Tăng wait_after để tự nhiên hơn
+            self.human_sleep(1.5, 3.0)              # Thêm delay đọc trang
             html = self.get_html()
             soup = BeautifulSoup(html, "lxml")
 
