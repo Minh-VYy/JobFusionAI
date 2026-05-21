@@ -2,7 +2,7 @@
 // ADMIN DASHBOARD - JavaScript
 // =============================================
 
-const API = 'http://localhost:8000/api';
+const API = '/api';
 let currentTab = 'bots';
 let jobsData = [];
 let currentReviewJob = null;

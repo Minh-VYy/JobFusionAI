@@ -96,24 +96,41 @@ class BaseCrawler:
             )
             return False
 
+        # ✅ Ưu tiên dùng profile Chrome thật của user (có session đăng nhập)
+        # Nếu không dùng headless → dùng profile mặc định để giữ cookies/session
+        if not self.headless:
+            default_profile = os.path.expandvars(
+                r"%LOCALAPPDATA%\Google\Chrome\User Data"
+            )
+            if os.path.exists(default_profile):
+                user_data_dir = default_profile
+                logger.info(f"🔑 Dùng profile Chrome thật (có session đăng nhập): {user_data_dir}")
+            else:
+                user_data_dir = r"C:\ChromeProfile"
+                os.makedirs(user_data_dir, exist_ok=True)
+        else:
+            user_data_dir = r"C:\ChromeProfile"
+            os.makedirs(user_data_dir, exist_ok=True)
+
         logger.info(
             f"🚀 Launching Chrome at: {chrome_path} with debugging port 9222..."
         )
-        user_data_dir = r"C:\ChromeProfile"
-        os.makedirs(user_data_dir, exist_ok=True)
 
         cmd = [
             chrome_path,
             "--remote-debugging-port=9222",
             f"--user-data-dir={user_data_dir}",
+            "--no-first-run",
+            "--no-default-browser-check",
         ]
         if self.headless:
             cmd.append("--headless=new")
 
         try:
             subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-            for _ in range(8):
-                time.sleep(0.5)
+            # Chờ lâu hơn (15s) khi mở Chrome thật với profile đầy
+            for _ in range(15):
+                time.sleep(1)
                 if self._is_port_open(9222):
                     logger.info("✅ Chrome launched and listening on port 9222")
                     return True
@@ -150,7 +167,6 @@ class BaseCrawler:
         ua = random.choice(DESKTOP_USER_AGENTS)
         vp = random.choice(VIEWPORT_SIZES)
         context_options = {
-            "user_agent": ua,
             "viewport": vp,
             "locale": "vi-VN",
             "timezone_id": "Asia/Ho_Chi_Minh",
@@ -161,6 +177,14 @@ class BaseCrawler:
                 "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
             },
         }
+
+        # Chỉ áp dụng User-Agent ngẫu nhiên khi dùng CDP (Chrome thật của người dùng).
+        # Khi dùng trình duyệt ảo sạch (use_cdp=False), ta loại bỏ UA fake lệch phiên bản để Playwright
+        # tự động dùng User-Agent chuẩn gốc khớp 100% với fingerprint, giúp bypass Turnstile tốt nhất.
+        if self.use_cdp:
+            context_options["user_agent"] = ua
+        else:
+            ua = "Playwright Default UA"
 
         if self.use_cdp:
             self._auto_launch_chrome()
@@ -211,6 +235,18 @@ class BaseCrawler:
             ],
         )
 
+        if not self.use_cdp:
+            # Lấy User-Agent gốc của Chromium và thay thế 'HeadlessChrome' thành 'Chrome'
+            try:
+                temp_context = self.browser.new_context()
+                temp_page = temp_context.new_page()
+                raw_ua = temp_page.evaluate("navigator.userAgent")
+                temp_context.close()
+                ua = raw_ua.replace("HeadlessChrome", "Chrome")
+                context_options["user_agent"] = ua
+            except Exception as e:
+                logger.warning(f"⚠️ Không thể giải quyết dynamic User-Agent: {e}")
+
         self.context = self.browser.new_context(**context_options)
 
         self.page = self.context.new_page()
@@ -234,6 +270,52 @@ class BaseCrawler:
             return True
         except Exception as e:
             logger.warning(f"⚠️ Không thể tạo tab mới: {e}")
+            return False
+
+    def restart_with_cdp(self) -> bool:
+        """
+        Đóng browser ảo hiện tại và khởi động lại bằng CDP (Chrome thật đang mở).
+        Dùng khi phát hiện bị chặn trong chế độ headless/virtual browser.
+        Trả về True nếu khởi động lại thành công, False nếu thất bại.
+        """
+        logger.warning("🔄 [Fallback] Đang chuyển sang Chrome thật (CDP mode) do bị chặn...")
+        # 1. Đóng browser hiện tại an toàn
+        try:
+            if getattr(self, "page", None) and not self.page.is_closed():
+                self.page.close()
+        except Exception:
+            pass
+        try:
+            if self.context:
+                self.context.close()
+        except Exception:
+            pass
+        try:
+            if self.browser and not getattr(self, "_was_cdp", False):
+                self.browser.close()
+        except Exception:
+            pass
+        try:
+            if self.playwright:
+                self.playwright.stop()
+        except Exception:
+            pass
+
+        # 2. Reset sang chế độ CDP
+        self.use_cdp = True
+        self.headless = False  # Chrome thật không cần headless
+        self.playwright = None
+        self.browser = None
+        self.context = None
+        self.page = None
+
+        # 3. Thử khởi động lại với CDP
+        try:
+            self.start()
+            logger.info("✅ [Fallback] Đã kết nối thành công Chrome thật qua CDP!")
+            return True
+        except Exception as e:
+            logger.error(f"❌ [Fallback] Không thể kết nối Chrome thật: {e}")
             return False
 
     def _clean_chrome_cache(self):
@@ -338,8 +420,10 @@ class BaseCrawler:
     def _inject_stealth_scripts(self):
         """Inject các script ẩn dấu hiệu automation vào mọi trang"""
         self.page.add_init_script("""
-            // 1. Ẩn cờ webdriver
-            Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
+            // 1. Xóa cờ webdriver triệt để khỏi prototype
+            try {
+                delete Object.getPrototypeOf(navigator).webdriver;
+            } catch (e) {}
 
             // 2. Giả lập plugins của trình duyệt thật
             Object.defineProperty(navigator, 'plugins', {
@@ -369,6 +453,35 @@ class BaseCrawler:
             // 6. Giả lập hardware concurrency thực tế
             Object.defineProperty(navigator, 'hardwareConcurrency', { get: () => 4 });
             Object.defineProperty(navigator, 'deviceMemory', { get: () => 8 });
+
+            // 7. Giả lập WebGL để bypass Turnstile headless detection (SwiftShader/Mesa)
+            try {
+                const getParameterProxy = (target, thisArg, argList) => {
+                    const param = argList[0];
+                    // 37445 is UNMASKED_VENDOR_WEBGL
+                    if (param === 37445) {
+                        return 'Google Inc. (NVIDIA)';
+                    }
+                    // 37446 is UNMASKED_RENDERER_WEBGL
+                    if (param === 37446) {
+                        return 'ANGLE (NVIDIA, NVIDIA GeForce RTX 3060 Direct3D11 vs_5_0 ps_5_0, D3D11)';
+                    }
+                    return Reflect.apply(target, thisArg, argList);
+                };
+
+                if (window.WebGLRenderingContext) {
+                    WebGLRenderingContext.prototype.getParameter = new Proxy(
+                        WebGLRenderingContext.prototype.getParameter,
+                        { apply: getParameterProxy }
+                    );
+                }
+                if (window.WebGL2RenderingContext) {
+                    WebGL2RenderingContext.prototype.getParameter = new Proxy(
+                        WebGL2RenderingContext.prototype.getParameter,
+                        { apply: getParameterProxy }
+                    );
+                }
+            } catch (e) {}
         """)
 
     # ================================================================

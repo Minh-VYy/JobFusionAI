@@ -24,16 +24,76 @@ class TopCVCrawler(BaseCrawler):
     SOURCE_NAME = "topcv"
 
     def __init__(self, max_pages: int = 3, headless: bool = True, max_jobs: int = 10):
-        super().__init__(headless=headless)
+        super().__init__(headless=headless, use_cdp=False)
         self.max_pages = max_pages   # Số trang muốn crawl
         self.max_jobs = max_jobs     # Số lượng job tối đa muốn lấy
         self.jobs = []               # Lưu kết quả
+        self._cdp_fallback_used = False  # Đánh dấu đã dùng CDP fallback chưa
+
+    # ==================== BLOCK DETECTION ====================
+
+    def _is_blocked(self, html: str) -> bool:
+        """
+        Kiểm tra xem trang có đang bị chặn không dựa vào nội dung HTML.
+
+        QUAN TRỌNG:
+        - TopCV dùng Cloudflare CDN → "cloudflare", "turnstile" xuất hiện bình thường
+        - TopCV nhúng Google reCAPTCHA ẩn (invisible) cho form login → "recaptcha" bình thường
+        - Chỉ block khi thấy trang LỖI Cloudflare thật sự
+
+        Chiến lược phân tầng:
+        - Hard signals: Cực đặc trưng của trang lỗi CF → chặn ngay
+        - Soft signals: Kết hợp với việc thiếu job cards → mới coi là bị chặn
+        """
+        lower = html.lower()
+
+        # ── Tầng 1: Hard signals — chỉ xuất hiện trên trang lỗi Cloudflare ──────
+        # KHÔNG dùng: cloudflare, turnstile, recaptcha, hcaptcha (xuất hiện bình thường)
+        hard_block_signals = [
+            "sorry, you have been blocked",  # Tiêu đề trang block CF chính thức
+            "you have been blocked",
+            "cf-error-details",              # Class đặc trưng trang lỗi CF
+            "error 1010",                    # CF Access Denied code
+            "error 1015",                    # CF rate-limited code
+            "error 1020",                    # CF firewall block code
+            "error 1009",                    # CF IP blocked code
+            "checking your browser",         # CF interstitial "Just a moment..."
+            "ddos-guard",
+        ]
+        for signal in hard_block_signals:
+            if signal in lower:
+                logger.debug(f"   [Block] Hard signal detected: '{signal}'")
+                return True
+
+        # ── Tầng 2: Soft signals — chỉ block nếu không có job cards ────────────
+        has_job_cards = (
+            "job-item-search-result" in lower
+            or "job-title" in lower
+            or "job-item" in lower
+        )
+        if not has_job_cards:
+            soft_block_signals = [
+                "unable to access",
+                "cf-wrapper",     # Cloudflare error page wrapper
+                "access denied",
+                # hcaptcha/recaptcha chỉ là block khi KHÔNG có job cards
+                # vì TopCV nhúng invisible reCAPTCHA bình thường
+                "data-hcaptcha-widget-id",  # hCaptcha challenge widget (không phải invisible)
+            ]
+            for signal in soft_block_signals:
+                if signal in lower:
+                    logger.debug(f"   [Block] Soft signal + no jobs: '{signal}'")
+                    return True
+
+        return False
+
 
     # ==================== CRAWL DANH SÁCH ====================
 
     def crawl(self, progress_callback=None) -> list[JobModel]:
-        """Entry point — crawl toàn bộ"""
+        """Entry point — crawl toàn bộ, tự động fallback sang CDP nếu bị chặn"""
         self.start()
+        consecutive_empty = 0  # Đếm số trang liên tiếp bị chặn/rỗng
         try:
             for page_num in range(1, self.max_pages + 1):
                 if progress_callback:
@@ -42,15 +102,54 @@ class TopCVCrawler(BaseCrawler):
                 logger.info(f"📄 Crawl trang {page_num}/{self.max_pages}")
 
                 if not self.goto(url):
+                    consecutive_empty += 1
                     continue
 
                 # Scroll để load hết job cards
                 self.scroll_to_bottom()
 
-                # Lấy HTML và parse
+                # Lấy HTML và kiểm tra bị chặn
                 html = self.get_html()
+
+                # ✅ BLOCK DETECTION: Kiểm tra có bị chặn không
+                if self._is_blocked(html):
+                    consecutive_empty += 1
+                    logger.warning(
+                        f"⚠️ TopCV đang chặn bot trên trang {page_num} (lần {consecutive_empty}) — HTML có dấu hiệu bị chặn!"
+                    )
+
+                    # ✅ Tự động fallback sang Chrome thật (CDP) nếu chưa thử
+                    if not self._cdp_fallback_used:
+                        logger.warning("🔄 Đang thử chuyển sang Chrome thật đã đăng nhập...")
+                        if self.restart_with_cdp():
+                            self._cdp_fallback_used = True
+                            consecutive_empty = 0  # Reset counter sau khi fallback
+                            # Thử lại trang vừa bị chặn
+                            if not self.goto(url):
+                                continue
+                            self.scroll_to_bottom()
+                            html = self.get_html()
+                            if self._is_blocked(html):
+                                logger.error("❌ [CDP] Vẫn bị chặn ngay cả sau khi dùng Chrome thật!")
+                                break
+                        else:
+                            logger.error("❌ Không thể kết nối Chrome thật. Hãy mở Chrome rồi đăng nhập TopCV trước.")
+                            break
+                    else:
+                        # Đã dùng CDP nhưng vẫn bị chặn
+                        logger.error("❌ [CDP] Vận tị chặn sau khi dùng Chrome thật, dừng crawl.")
+                        break
+
                 page_jobs = self.parse_job_list(html)
                 logger.info(f"   → Tìm thấy {len(page_jobs)} jobs trên trang")
+
+                if len(page_jobs) == 0:
+                    consecutive_empty += 1
+                    if consecutive_empty >= 3:
+                        logger.warning("⚠️ 3 trang liên tiếp không có job, dừng crawl.")
+                        break
+                else:
+                    consecutive_empty = 0  # Reset khi thành công
 
                 for job in page_jobs:
                     if len(self.jobs) >= self.max_jobs:
@@ -65,7 +164,8 @@ class TopCVCrawler(BaseCrawler):
         finally:
             self.stop()
 
-        logger.info(f"✅ TopCV: Crawl xong {len(self.jobs)} jobs")
+        mode_str = "📱 Chrome thật (CDP)" if self._cdp_fallback_used else "🤖 Browser ảo (Stealth)"
+        logger.info(f"✅ TopCV: Crawl xong {len(self.jobs)} jobs [{mode_str}]")
         return self.jobs
 
     # ==================== PARSE DANH SÁCH ====================

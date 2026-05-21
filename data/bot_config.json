@@ -52,13 +52,13 @@
   "topcv": {
     "enabled": true,
     "max_pages": 2,
-    "max_jobs": 100,
+    "max_jobs": 50,
     "headless": false
   },
   "itviec": {
     "enabled": true,
     "max_pages": 1,
-    "max_jobs": 10,
+    "max_jobs": 50,
     "headless": false
   },
   "vietnamworks": {

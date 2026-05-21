@@ -55,21 +55,21 @@ logger = logging.getLogger("server")
 
 
 # --- CRAWL QUEUE (chạy bot qua subprocess riêng, không bị kill khi server reload) ---
-_crawl_queue: Queue[tuple[Optional[int], Optional[str]]] = Queue()
+_crawl_queue: Queue[tuple[Optional[int], Optional[str], bool]] = Queue()
 _crawl_worker_started = False
 _active_crawl_process = None  # subprocess đang chạy
 
 
-def _run_crawl_pipeline(target_bot: Optional[str]):
+def _run_crawl_pipeline(target_bot: Optional[str], force_headless: bool = True):
     """Chạy pipeline trong subprocess riêng — tránh bị kill khi uvicorn reload."""
     global _active_crawl_process
 
     cmd = [sys.executable, "-c",
            f"import sys; sys.path.insert(0, '.'); "
            f"from main import run_pipeline; "
-           f"run_pipeline({repr(target_bot)}, force_headless=True)"]
+           f"run_pipeline({repr(target_bot)}, force_headless={force_headless})"]
 
-    logger.info(f"🚀 Spawning crawler subprocess for: {target_bot or 'ALL'}")
+    logger.info(f"🚀 Spawning crawler subprocess for: {target_bot or 'ALL'} | force_headless: {force_headless}")
     try:
         _active_crawl_process = subprocess.Popen(
             cmd,
@@ -99,12 +99,12 @@ def _run_crawl_pipeline(target_bot: Optional[str]):
 
 def _crawl_worker():
     while True:
-        task_id, source_name = _crawl_queue.get()
+        task_id, source_name, force_headless = _crawl_queue.get()
         try:
             logger.info(
-                f"🧵 Dequeued crawl request: task_id={task_id}, source={source_name or 'all'}"
+                f"🧵 Dequeued crawl request: task_id={task_id}, source={source_name or 'all'}, force_headless={force_headless}"
             )
-            _run_crawl_pipeline(source_name)
+            _run_crawl_pipeline(source_name, force_headless=force_headless)
         except Exception as e:
             logger.error(f"❌ Crawl worker error for task_id={task_id}: {e}")
         finally:
@@ -120,9 +120,9 @@ def _ensure_crawl_worker_started():
     _crawl_worker_started = True
 
 
-def _enqueue_crawl(task_id: Optional[int], source_name: Optional[str]):
+def _enqueue_crawl(task_id: Optional[int], source_name: Optional[str], force_headless: bool = True):
     _ensure_crawl_worker_started()
-    _crawl_queue.put((task_id, source_name))
+    _crawl_queue.put((task_id, source_name, force_headless))
     return _crawl_queue.qsize()
 
 
@@ -211,7 +211,7 @@ def _scheduler_loop():
                     session.commit()
                     
                     # Đưa vào hàng đợi worker
-                    queue_size = _enqueue_crawl(task.id, task.source_name)
+                    queue_size = _enqueue_crawl(task.id, task.source_name, force_headless=True)
                     logger.info(f"🚀 Bot {task.source_name} đã vào hàng đợi nền. Kích thước hàng đợi: {queue_size}. Lần chạy kế tiếp: {task.next_run_at} UTC")
                     
         except Exception as e:
@@ -611,9 +611,9 @@ def run_task(task_id: int):
         task.last_run_at = datetime.utcnow()
         session.commit()
 
-        queue_size = _enqueue_crawl(task_id, task.source_name)
+        queue_size = _enqueue_crawl(task_id, task.source_name, force_headless=False)
         logger.info(
-            f"🚀 Enqueued Crawler Pipeline for Task #{task_id} ({task.source_name or 'all'}). Queue size: {queue_size}"
+            f"🚀 Enqueued Crawler Pipeline for Task #{task_id} ({task.source_name or 'all'}) | force_headless: False. Queue size: {queue_size}"
         )
 
         return {
@@ -652,9 +652,9 @@ def run_task_by_source(source_name: str):
         task.last_run_at = datetime.utcnow()
         session.commit()
 
-        queue_size = _enqueue_crawl(task.id, source_name)
+        queue_size = _enqueue_crawl(task.id, source_name, force_headless=False)
         logger.info(
-            f"🚀 Enqueued Crawler Pipeline for {source_name}. Queue size: {queue_size}"
+            f"🚀 Enqueued Crawler Pipeline for {source_name} | force_headless: False. Queue size: {queue_size}"
         )
 
         return {
