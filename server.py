@@ -7,6 +7,8 @@ import json
 import logging
 import re
 import subprocess
+import threading
+from queue import Queue
 from datetime import datetime, timedelta
 from typing import Any, List, Optional
 
@@ -51,6 +53,182 @@ logging.basicConfig(
 )
 logger = logging.getLogger("server")
 
+
+# --- CRAWL QUEUE (chạy bot qua subprocess riêng, không bị kill khi server reload) ---
+_crawl_queue: Queue[tuple[Optional[int], Optional[str]]] = Queue()
+_crawl_worker_started = False
+_active_crawl_process = None  # subprocess đang chạy
+
+
+def _run_crawl_pipeline(target_bot: Optional[str]):
+    """Chạy pipeline trong subprocess riêng — tránh bị kill khi uvicorn reload."""
+    global _active_crawl_process
+
+    cmd = [sys.executable, "-c",
+           f"import sys; sys.path.insert(0, '.'); "
+           f"from main import run_pipeline; "
+           f"run_pipeline({repr(target_bot)}, force_headless=True)"]
+
+    logger.info(f"🚀 Spawning crawler subprocess for: {target_bot or 'ALL'}")
+    try:
+        _active_crawl_process = subprocess.Popen(
+            cmd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            bufsize=1,
+        )
+        # Stream output vào logger
+        for line in _active_crawl_process.stdout:
+            line = line.rstrip()
+            if line:
+                logger.info(f"[crawler] {line}")
+        _active_crawl_process.wait()
+        rc = _active_crawl_process.returncode
+        if rc != 0:
+            logger.error(f"❌ Crawler subprocess exited with code {rc}")
+        else:
+            logger.info(f"✅ Crawler subprocess finished (code {rc})")
+    except Exception as e:
+        logger.error(f"❌ Failed to spawn crawler subprocess: {e}")
+    finally:
+        _active_crawl_process = None
+
+
+def _crawl_worker():
+    while True:
+        task_id, source_name = _crawl_queue.get()
+        try:
+            logger.info(
+                f"🧵 Dequeued crawl request: task_id={task_id}, source={source_name or 'all'}"
+            )
+            _run_crawl_pipeline(source_name)
+        except Exception as e:
+            logger.error(f"❌ Crawl worker error for task_id={task_id}: {e}")
+        finally:
+            _crawl_queue.task_done()
+
+
+def _ensure_crawl_worker_started():
+    global _crawl_worker_started
+    if _crawl_worker_started:
+        return
+    worker = threading.Thread(target=_crawl_worker, daemon=True)
+    worker.start()
+    _crawl_worker_started = True
+
+
+def _enqueue_crawl(task_id: Optional[int], source_name: Optional[str]):
+    _ensure_crawl_worker_started()
+    _crawl_queue.put((task_id, source_name))
+    return _crawl_queue.qsize()
+
+
+def calculate_next_run_at(schedule_cron: str, last_run_at_utc: Optional[datetime] = None) -> datetime:
+    """Tính toán thời điểm chạy tiếp theo (UTC) từ cấu hình lưu trong database."""
+    import datetime as dt
+    now_local = dt.datetime.now()  # Giờ địa phương của máy chủ
+    
+    if not schedule_cron:
+        return dt.datetime.utcnow() + dt.timedelta(days=1)
+        
+    if ":" in schedule_cron:
+        # Định dạng HH:MM (Giờ địa phương, ví dụ: "08:00")
+        try:
+            parts = schedule_cron.split(":")
+            hour = int(parts[0])
+            minute = int(parts[1])
+            
+            # Thời điểm mục tiêu hôm nay
+            target_local = now_local.replace(hour=hour, minute=minute, second=0, microsecond=0)
+            if target_local <= now_local:
+                # Nếu đã trôi qua giờ này trong hôm nay, lịch chạy sẽ là ngày mai
+                target_local += dt.timedelta(days=1)
+                
+            # Đổi naive local time sang naive UTC time để lưu DB
+            local_utc_diff = dt.datetime.now() - dt.datetime.utcnow()
+            target_utc = target_local - local_utc_diff
+            return target_utc
+        except Exception as e:
+            logger.error(f"Lỗi phân tích cú pháp lịch chạy dạng HH:MM: {e}")
+            return dt.datetime.utcnow() + dt.timedelta(days=1)
+            
+    elif schedule_cron.startswith("*/") and schedule_cron.endswith("h"):
+        # Định dạng định kỳ mỗi X giờ (ví dụ: "*/6h")
+        try:
+            hours = int(schedule_cron[2:-1])
+            if last_run_at_utc:
+                next_utc = last_run_at_utc + dt.timedelta(hours=hours)
+                if next_utc <= dt.datetime.utcnow():
+                    next_utc = dt.datetime.utcnow() + dt.timedelta(hours=hours)
+                return next_utc
+            else:
+                return dt.datetime.utcnow() + dt.timedelta(hours=hours)
+        except Exception as e:
+            logger.error(f"Lỗi phân tích cú pháp lịch chạy dạng định kỳ giờ: {e}")
+            return dt.datetime.utcnow() + dt.timedelta(hours=6)
+            
+    else:
+        # Mặc định: Chạy sau 24h
+        return dt.datetime.utcnow() + dt.timedelta(days=1)
+
+
+_scheduler_started = False
+
+def _scheduler_loop():
+    logger.info("⏳ Khởi động Background Crawler Task Scheduler...")
+    while True:
+        # Quét kiểm tra mỗi 30 giây
+        time.sleep(30)
+        session = models.get_session()
+        try:
+            now_utc = datetime.utcnow()
+            # Lấy tất cả các task đã kích hoạt lập lịch tự động
+            tasks = session.query(ScrapeTask).filter(ScrapeTask.is_scheduled == True).all()
+            for task in tasks:
+                if not task.schedule_cron:
+                    continue
+                
+                # Khởi tạo next_run_at nếu chưa có
+                if not task.next_run_at:
+                    task.next_run_at = calculate_next_run_at(task.schedule_cron, task.last_run_at)
+                    session.commit()
+                    logger.info(f"⏰ Đã cấu hình thời điểm chạy lần đầu cho {task.name}: {task.next_run_at} UTC")
+                    continue
+                
+                # Kiểm tra xem đã đến thời gian chạy chưa
+                if now_utc >= task.next_run_at:
+                    logger.info(f"⏰ Kích hoạt lịch chạy tự động: {task.name} ({task.source_name or 'all'})")
+                    
+                    # Cập nhật thông tin chạy
+                    task.status = "running"
+                    task.last_run_at = now_utc
+                    
+                    # Tính toán chu kỳ chạy tiếp theo luôn
+                    task.next_run_at = calculate_next_run_at(task.schedule_cron, now_utc)
+                    session.commit()
+                    
+                    # Đưa vào hàng đợi worker
+                    queue_size = _enqueue_crawl(task.id, task.source_name)
+                    logger.info(f"🚀 Bot {task.source_name} đã vào hàng đợi nền. Kích thước hàng đợi: {queue_size}. Lần chạy kế tiếp: {task.next_run_at} UTC")
+                    
+        except Exception as e:
+            logger.error(f"❌ Lỗi trong luồng Scheduler nền: {e}")
+        finally:
+            session.close()
+
+
+def _ensure_scheduler_started():
+    global _scheduler_started
+    if _scheduler_started:
+        return
+    scheduler_thread = threading.Thread(target=_scheduler_loop, daemon=True)
+    scheduler_thread.start()
+    _scheduler_started = True
+
+
 # --- Khởi tạo database schema ---
 try:
     models.init_db()
@@ -73,6 +251,12 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+@app.on_event("startup")
+def _startup_crawl_worker():
+    _ensure_crawl_worker_started()
+    _ensure_scheduler_started()
 
 
 # --- WebSocket Clients Manager ---
@@ -176,11 +360,16 @@ def check_and_perform_auto_approval():
                     Job.status == "pending",
                     Job.scraped_at <= cutoff,
                 )
-                .update({Job.status: "approved", Job.needs_review: False}, synchronize_session=False)
+                .update(
+                    {Job.status: "approved", Job.needs_review: False},
+                    synchronize_session=False,
+                )
             )
             if updated_count > 0:
                 session.commit()
-                logger.info(f"⏰ Auto-Approved {updated_count} pending Facebook jobs older than {hours} hours.")
+                logger.info(
+                    f"⏰ Auto-Approved {updated_count} pending Facebook jobs older than {hours} hours."
+                )
         finally:
             session.close()
     except Exception as e:
@@ -215,13 +404,17 @@ def get_admin_stats():
         )
         scheduled_list = []
         for t in tasks_scheduled:
+            next_run_val = t.next_run_at
+            if not next_run_val and t.schedule_cron:
+                next_run_val = calculate_next_run_at(t.schedule_cron, t.last_run_at)
+                t.next_run_at = next_run_val
+                session.commit()
+                
             scheduled_list.append(
                 {
                     "name": t.name,
                     "trigger": t.schedule_cron or "Hàng ngày",
-                    "next_run": (
-                        datetime.utcnow() + timedelta(days=1)
-                    ).isoformat(),  # Tạm thời mock thời gian lần tới
+                    "next_run": next_run_val.isoformat() if next_run_val else None,
                 }
             )
 
@@ -334,7 +527,10 @@ def _merge_bot_config(raw_config: Optional[dict]) -> dict:
                     value.get("learn_from_admin", merged_policy["learn_from_admin"])
                 )
                 merged_policy["auto_approve_after_hours"] = int(
-                    value.get("auto_approve_after_hours", merged_policy.get("auto_approve_after_hours", 24))
+                    value.get(
+                        "auto_approve_after_hours",
+                        merged_policy.get("auto_approve_after_hours", 24),
+                    )
                 )
                 continue
             section_defaults[key] = value
@@ -415,22 +611,16 @@ def run_task(task_id: int):
         task.last_run_at = datetime.utcnow()
         session.commit()
 
-        # Khởi động crawler pipeline bất đồng bộ bằng Subprocess
-        # Chạy 'python main.py now [source_name]' ở chế độ background
-        try:
-            cwd_dir = os.path.dirname(os.path.abspath(__file__))
-            main_py = os.path.join(cwd_dir, "main.py")
-            args = [sys.executable, main_py, "now"]
-            if task.source_name:
-                args.append(task.source_name)
-            subprocess.Popen(args, cwd=cwd_dir, close_fds=True if os.name != "nt" else False)
-            logger.info(
-                f"🚀 Triggered Crawler Pipeline for Task #{task_id} ({task.source_name or 'all'}) in background."
-            )
-        except Exception as e:
-            logger.error(f"Error launching background crawl subprocess: {e}")
+        queue_size = _enqueue_crawl(task_id, task.source_name)
+        logger.info(
+            f"🚀 Enqueued Crawler Pipeline for Task #{task_id} ({task.source_name or 'all'}). Queue size: {queue_size}"
+        )
 
-        return {"message": "Task started in background", "task_id": task_id}
+        return {
+            "message": "Task enqueued",
+            "task_id": task_id,
+            "queue_size": queue_size,
+        }
     finally:
         session.close()
 
@@ -462,19 +652,16 @@ def run_task_by_source(source_name: str):
         task.last_run_at = datetime.utcnow()
         session.commit()
 
-        try:
-            cwd_dir = os.path.dirname(os.path.abspath(__file__))
-            main_py = os.path.join(cwd_dir, "main.py")
-            args = [sys.executable, main_py, "now"]
-            args.append(source_name)
-            subprocess.Popen(args, cwd=cwd_dir, close_fds=True if os.name != "nt" else False)
-            logger.info(
-                f"🚀 Triggered Crawler Pipeline for {source_name} in background."
-            )
-        except Exception as e:
-            logger.error(f"Error launching background crawl subprocess: {e}")
+        queue_size = _enqueue_crawl(task.id, source_name)
+        logger.info(
+            f"🚀 Enqueued Crawler Pipeline for {source_name}. Queue size: {queue_size}"
+        )
 
-        return {"message": "Task started in background", "source_name": source_name}
+        return {
+            "message": "Task enqueued",
+            "source_name": source_name,
+            "queue_size": queue_size,
+        }
     finally:
         session.close()
 
@@ -510,6 +697,10 @@ def update_task_schedule_by_source(source_name: str, data: ScheduleUpdate):
 
         task.is_scheduled = data.is_scheduled
         task.schedule_cron = data.schedule_cron
+        if data.is_scheduled:
+            task.next_run_at = calculate_next_run_at(data.schedule_cron, task.last_run_at)
+        else:
+            task.next_run_at = None
         session.commit()
         return {"message": "Cập nhật lịch chạy thành công", "task": task.to_dict()}
     finally:
@@ -526,6 +717,10 @@ def update_task_schedule(task_id: int, data: ScheduleUpdate):
 
         task.is_scheduled = data.is_scheduled
         task.schedule_cron = data.schedule_cron
+        if data.is_scheduled:
+            task.next_run_at = calculate_next_run_at(data.schedule_cron, task.last_run_at)
+        else:
+            task.next_run_at = None
         session.commit()
         return {"message": "Cập nhật lịch chạy thành công", "task": task.to_dict()}
     finally:
@@ -561,6 +756,21 @@ def delete_task(task_id: int):
 
 
 # --- API Admin: Kiểm Duyệt Việc Làm (Review / Active Learning) ---
+@app.get("/api/jobs")
+def get_jobs(limit: int = 100, status: str = "approved", source: Optional[str] = None):
+    session = models.get_session()
+    try:
+        query = session.query(Job)
+        if status and status != "all":
+            query = query.filter(Job.status == status)
+        if source:
+            query = query.filter(Job.source_name == source)
+        jobs = query.order_by(Job.scraped_at.desc()).limit(limit).all()
+        return {"jobs": [j.to_dict() for j in jobs]}
+    finally:
+        session.close()
+
+
 @app.get("/api/admin/jobs/review")
 def get_review_jobs(
     limit: int = 100, status: str = "all", source: Optional[str] = None
@@ -568,13 +778,12 @@ def get_review_jobs(
     check_and_perform_auto_approval()
     session = models.get_session()
     try:
-        jobs = (
-            session.query(Job)
-            .filter(Job.status == "pending")
-            .order_by(Job.scraped_at.desc())
-            .limit(limit)
-            .all()
-        )
+        query = session.query(Job)
+        if status and status != "all":
+            query = query.filter(Job.status == status)
+        if source:
+            query = query.filter(Job.source_name == source)
+        jobs = query.order_by(Job.scraped_at.desc()).limit(limit).all()
         return {"jobs": [j.to_dict() for j in jobs]}
     finally:
         session.close()

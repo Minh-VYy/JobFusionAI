@@ -1,7 +1,7 @@
 {
   "facebook": {
     "enabled": true,
-    "max_posts_per_group": 5,
+    "max_posts_per_group": 10,
     "max_groups_per_session": 3,
     "max_days_old": 3,
     "facebook_groups": [
@@ -58,13 +58,13 @@
   "itviec": {
     "enabled": true,
     "max_pages": 1,
-    "max_jobs": 100,
+    "max_jobs": 10,
     "headless": false
   },
   "vietnamworks": {
     "enabled": true,
     "max_pages": 2,
-    "max_jobs": 100,
+    "max_jobs": 10,
     "headless": false
   }
 }

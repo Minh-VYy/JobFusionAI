@@ -8,7 +8,7 @@ import math
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(message)s",
-    datefmt="%H:%M:%S"
+    datefmt="%H:%M:%S",
 )
 logger = logging.getLogger(__name__)
 
@@ -42,7 +42,13 @@ class BaseCrawler:
     - Context manager support
     """
 
-    def __init__(self, headless: bool = True, max_pages: int = 5, use_cdp: bool = True, cdp_url: str = "http://localhost:9222"):
+    def __init__(
+        self,
+        headless: bool = True,
+        max_pages: int = 5,
+        use_cdp: bool = True,
+        cdp_url: str = "http://localhost:9222",
+    ):
         self.headless = headless
         self.max_pages = max_pages
         self.use_cdp = use_cdp
@@ -54,6 +60,7 @@ class BaseCrawler:
 
     def _is_port_open(self, port=9222) -> bool:
         import socket
+
         try:
             with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
                 s.settimeout(1.0)
@@ -100,6 +107,8 @@ class BaseCrawler:
             "--remote-debugging-port=9222",
             f"--user-data-dir={user_data_dir}",
         ]
+        if self.headless:
+            cmd.append("--headless=new")
 
         try:
             subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
@@ -120,13 +129,13 @@ class BaseCrawler:
 
     def _setup_popup_blocker(self):
         """Tự động phát hiện và đóng lập tức tất cả các tab phụ/popup tự động mở ra"""
-        if not hasattr(self, 'context') or not self.context:
+        if not hasattr(self, "context") or not self.context:
             return
 
         def handle_new_page(new_page):
             try:
                 # Đóng ngay lập tức nếu tab được mở không phải tab chính của bot hiện tại
-                if hasattr(self, 'page') and self.page and new_page != self.page:
+                if hasattr(self, "page") and self.page and new_page != self.page:
                     new_page.close()
             except:
                 pass
@@ -138,24 +147,49 @@ class BaseCrawler:
         logger.info("🚀 Khởi động browser...")
         self.playwright = sync_playwright().start()
 
+        ua = random.choice(DESKTOP_USER_AGENTS)
+        vp = random.choice(VIEWPORT_SIZES)
+        context_options = {
+            "user_agent": ua,
+            "viewport": vp,
+            "locale": "vi-VN",
+            "timezone_id": "Asia/Ho_Chi_Minh",
+            "java_script_enabled": True,
+            "permissions": ["geolocation"],
+            "extra_http_headers": {
+                "Accept-Language": "vi-VN,vi;q=0.9,en-US;q=0.8,en;q=0.7",
+                "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
+            },
+        }
+
         if self.use_cdp:
             self._auto_launch_chrome()
             try:
                 logger.info(f"🔗 Đang thử kết nối CDP: {self.cdp_url}...")
-                self.browser = self.playwright.chromium.connect_over_cdp(self.cdp_url)
-                self.context = self.browser.contexts[0]
-                
+                self.browser = self.playwright.chromium.connect_over_cdp(
+                    self.cdp_url, timeout=10000
+                )
+                if self.browser.contexts:
+                    self.context = self.browser.contexts[0]
+                else:
+                    self.context = self.browser.new_context(**context_options)
+
                 # LUÔN TẠO TAB MỚI ĐỂ TRÁNH ĐÈ LÊN BOT KHÁC
                 logger.info("Mở tab mới trên trình duyệt hiện tại...")
                 self.page = self.context.new_page()
-                
+
                 # Bật popup blocker tự động đóng các tab phụ
                 self._setup_popup_blocker()
-                
-                logger.info("✅ Đã kết nối thành công tới trình duyệt có sẵn (Tab mới)!")
+                self._inject_stealth_scripts()
+
+                logger.info(
+                    "✅ Đã kết nối thành công tới trình duyệt có sẵn (Tab mới)!"
+                )
                 return
             except Exception as e:
-                logger.warning(f"⚠️ Không kết nối được trình duyệt thật ({e}). Mở trình duyệt ảo...")
+                logger.warning(
+                    f"⚠️ Không kết nối được trình duyệt thật ({e}). Mở trình duyệt ảo..."
+                )
                 self.use_cdp = False
 
         logger.info("🚀 Khởi động trình duyệt ảo (stealth mode)...")
@@ -174,38 +208,38 @@ class BaseCrawler:
                 "--disable-features=TranslateUI",
                 "--disable-web-security",
                 "--lang=vi-VN",
-            ]
+            ],
         )
 
-        ua = random.choice(DESKTOP_USER_AGENTS)
-        vp = random.choice(VIEWPORT_SIZES)
-
-        self.context = self.browser.new_context(
-            user_agent=ua,
-            viewport=vp,
-            locale="vi-VN",
-            timezone_id="Asia/Ho_Chi_Minh",
-            java_script_enabled=True,
-            # Giả lập permission — tránh popup
-            permissions=["geolocation"],
-            extra_http_headers={
-                "Accept-Language": "vi-VN,vi;q=0.9,en-US;q=0.8,en;q=0.7",
-                "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
-            }
-        )
+        self.context = self.browser.new_context(**context_options)
 
         self.page = self.context.new_page()
         self._inject_stealth_scripts()
-        
+
         # Bật popup blocker tự động đóng các tab phụ
         self._setup_popup_blocker()
 
-        logger.info(f"✅ Browser ảo sẵn sàng | UA: {ua[:60]}... | VP: {vp['width']}x{vp['height']}")
+        logger.info(
+            f"✅ Browser ảo sẵn sàng | UA: {ua[:60]}... | VP: {vp['width']}x{vp['height']}"
+        )
+
+    def _recreate_page(self):
+        """Tạo lại tab mới khi page hiện tại bị detach/đóng."""
+        if not self.context or self.context.is_closed():
+            return False
+        try:
+            self.page = self.context.new_page()
+            self._inject_stealth_scripts()
+            self._setup_popup_blocker()
+            return True
+        except Exception as e:
+            logger.warning(f"⚠️ Không thể tạo tab mới: {e}")
+            return False
 
     def _clean_chrome_cache(self):
         """Dọn dẹp các thư mục cache của ChromeProfile mà không làm mất trạng thái đăng nhập"""
         import os
-        
+
         profile_dir = r"C:\ChromeProfile"
         if not os.path.exists(profile_dir):
             return
@@ -221,7 +255,9 @@ class BaseCrawler:
             r"ShaderCache",
         ]
 
-        logger.info("🧹 Đang tự động dọn dẹp bộ nhớ đệm Chrome để giảm dung lượng ổ đĩa...")
+        logger.info(
+            "🧹 Đang tự động dọn dẹp bộ nhớ đệm Chrome để giảm dung lượng ổ đĩa..."
+        )
         freed = 0
         for target in cache_targets:
             target_path = os.path.join(profile_dir, target)
@@ -244,34 +280,45 @@ class BaseCrawler:
                         except Exception:
                             pass
         if freed > 0:
-            logger.info(f"✅ Tự động dọn dẹp Chrome hoàn tất! Đã giải phóng: {freed / (1024*1024):.2f} MB")
+            logger.info(
+                f"✅ Tự động dọn dẹp Chrome hoàn tất! Đã giải phóng: {freed / (1024 * 1024):.2f} MB"
+            )
 
     def stop(self):
         """Đóng/Ngắt kết nối browser, giải phóng memory"""
         # Luôn đóng tab hiện tại để tránh lưu rác/nhiều tab mở
-        if getattr(self, 'page', None) and not self.page.is_closed():
+        if getattr(self, "page", None) and not self.page.is_closed():
             try:
                 self.page.close()
                 logger.info("🛑 Đã đóng tab của crawler hiện tại")
             except:
                 pass
 
-        if getattr(self, 'use_cdp', False) and hasattr(self, 'browser') and self.browser and self.browser.is_connected():
+        if self.context:
+            try:
+                self.context.close()
+            except:
+                pass
+
+        if (
+            getattr(self, "use_cdp", False)
+            and hasattr(self, "browser")
+            and self.browser
+            and self.browser.is_connected()
+        ):
             logger.info("🛑 Ngắt kết nối khỏi trình duyệt thật (giữ Chrome luôn mở)...")
             # KHÔNG gọi self.browser.close() vì sẽ tắt luôn cả ứng dụng Chrome của người dùng!
             # Playwright sẽ tự động ngắt kết nối an toàn khi gọi playwright.stop()
         else:
-            if self.context:
-                self.context.close()
             if self.browser:
                 self.browser.close()
-        
+
         if self.playwright:
             self.playwright.stop()
         logger.info("🛑 Playwright cleanup hoàn tất")
-        
+
         # Tự động dọn dẹp cache của Chrome sau khi đóng tab
-        if getattr(self, 'use_cdp', False):
+        if getattr(self, "use_cdp", False):
             try:
                 self._clean_chrome_cache()
             except Exception as e:
@@ -328,16 +375,54 @@ class BaseCrawler:
     # ĐIỀU HƯỚNG
     # ================================================================
 
+    def _refresh_or_recreate_page(self, reason: str = ""):
+        """Refresh tab hien tai; neu tab hong thi tao tab moi."""
+        try:
+            if self.page and not self.page.is_closed():
+                logger.warning(f"Refresh page vi trang co dau hieu bi dung: {reason}")
+                self.page.reload(timeout=15000, wait_until="domcontentloaded")
+                return
+        except Exception as e:
+            logger.warning(f"Refresh page that bai, tao lai tab moi: {e}")
+        self._recreate_page()
+
     def goto(self, url: str, wait_after: float = 2.5) -> bool:
         """Truy cập URL + sleep ngẫu nhiên tự nhiên sau khi load"""
-        try:
-            logger.info(f"🌐 Navigating to: {url}")
-            self.page.goto(url, timeout=45000, wait_until="domcontentloaded")
-            self.human_sleep(wait_after, wait_after + 2)
-            return True
-        except Exception as e:
-            logger.error(f"❌ Lỗi truy cập {url}: {e}")
-            return False
+        last_error = None
+        for attempt in range(1, 4):
+            try:
+                if not self.page or self.page.is_closed():
+                    self._recreate_page()
+
+                logger.info(f"🌐 Navigating to: {url}")
+                self.page.goto(url, timeout=45000, wait_until="domcontentloaded")
+                self.human_sleep(wait_after, wait_after + 2)
+                return True
+            except Exception as e:
+                last_error = e
+                message = str(e)
+                retryable = any(
+                    token in message
+                    for token in (
+                        "Timeout",
+                        "Navigation timeout",
+                        "ERR_ABORTED",
+                        "ERR_TIMED_OUT",
+                        "frame was detached",
+                        "Execution context was destroyed",
+                        "Target page, context or browser has been closed",
+                    )
+                )
+                if attempt < 3 and retryable:
+                    logger.warning(f"⚠️ Lỗi điều hướng (thử lại {attempt}/3): {e}")
+                    self._refresh_or_recreate_page(str(e))
+                    self.human_sleep(0.5, 1.0)
+                    continue
+                logger.error(f"❌ Lỗi truy cập {url}: {e}")
+                return False
+
+        logger.error(f"❌ Lỗi truy cập {url}: {last_error}")
+        return False
 
     def get_html(self) -> str:
         """Lấy toàn bộ HTML của trang hiện tại"""
@@ -352,7 +437,7 @@ class BaseCrawler:
         Sleep ngẫu nhiên theo phân phối Gaussian (tự nhiên hơn uniform).
         Phân phối hình chuông: tập trung ở giữa khoảng, hiếm khi ở 2 đầu.
         """
-        mid  = (min_sec + max_sec) / 2
+        mid = (min_sec + max_sec) / 2
         sigma = (max_sec - min_sec) / 4
         sleep_time = random.gauss(mid, sigma)
         sleep_time = max(min_sec, min(max_sec, sleep_time))
@@ -400,7 +485,7 @@ class BaseCrawler:
             p.mouse.move(
                 random.randint(150, 900),
                 random.randint(100, 650),
-                steps=random.randint(5, 12)
+                steps=random.randint(5, 12),
             )
             self.micro_pause()
 
@@ -432,9 +517,11 @@ class BaseCrawler:
                 element_count = p.evaluate(
                     f"() => document.querySelectorAll('{count_selector}').length"
                 )
-                logger.debug(f"   [{i+1}/{scrolls}] Found {element_count} elements")
+                logger.debug(f"   [{i + 1}/{scrolls}] Found {element_count} elements")
                 if element_count >= stop_at_count:
-                    logger.info(f"   ✅ Reached {element_count} elements, stopping scroll")
+                    logger.info(
+                        f"   ✅ Reached {element_count} elements, stopping scroll"
+                    )
                     break
 
         return element_count
@@ -463,13 +550,14 @@ class BaseCrawler:
             return []
         try:
             from database.db_handler import DBHandler
+
             with DBHandler() as db:
                 known_urls = db.get_crawled_urls(
                     source_name=source_name,
                     max_age_days=max_age_days,
                 )
             new_urls = [u for u in urls if u not in known_urls]
-            skipped  = len(urls) - len(new_urls)
+            skipped = len(urls) - len(new_urls)
             if skipped:
                 logger.info(
                     f"   ⏭️ Incremental: skip {skipped} URLs đã crawl — "
@@ -493,7 +581,7 @@ class BaseCrawler:
             box = el.bounding_box()
             if box:
                 # Di chuột từ từ đến gần phần tử
-                target_x = box["x"] + box["width"]  / 2 + random.randint(-5, 5)
+                target_x = box["x"] + box["width"] / 2 + random.randint(-5, 5)
                 target_y = box["y"] + box["height"] / 2 + random.randint(-3, 3)
                 self.page.mouse.move(target_x, target_y, steps=random.randint(8, 15))
                 self.micro_pause()

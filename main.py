@@ -32,8 +32,102 @@ logging.basicConfig(
 )
 logger = logging.getLogger("main")
 
+
+# ================================================================
+# FAILOVER — Phát hiện bị chặn & tự động chuyển crawler
+# ================================================================
+
+class BlockSignal(Exception):
+    """Raise khi phát hiện crawler bị chặn."""
+    def __init__(self, source: str, reason: str):
+        self.source = source
+        self.reason = reason
+        super().__init__(f"[{source}] Bị chặn: {reason}")
+
+
+class BlockDetector:
+    """Theo dõi dấu hiệu bị chặn: trang trống liên tiếp, timeout liên tiếp."""
+    THRESHOLD = 3
+
+    def __init__(self):
+        self._empty: dict = {}
+        self._timeout: dict = {}
+
+    def check_empty_results(self, job_count: int, source: str):
+        if job_count == 0:
+            self._empty[source] = self._empty.get(source, 0) + 1
+            if self._empty[source] >= self.THRESHOLD:
+                raise BlockSignal(source, f"{self._empty[source]} trang liên tiếp không có job")
+        else:
+            self._empty[source] = 0
+
+    def on_timeout(self, source: str):
+        self._timeout[source] = self._timeout.get(source, 0) + 1
+        if self._timeout[source] >= self.THRESHOLD:
+            raise BlockSignal(source, f"{self._timeout[source]} timeout liên tiếp")
+
+
+class FailoverManager:
+    """Chạy từng crawler, tự động skip khi bị chặn và chuyển sang cái tiếp theo."""
+
+    def __init__(self, crawlers: list):
+        self.queue = list(crawlers)
+        self.blocked: set = set()
+        self.switch_events: list = []
+        self.jobs_per_source: dict = {}
+
+    def run(self, execute_fn) -> tuple:
+        """
+        Trả về (report_dict, all_jobs).
+        execute_fn(cfg) -> list[JobModel], có thể raise BlockSignal hoặc Exception.
+        """
+        all_jobs = []
+        for cfg in self.queue:
+            source = cfg["name"].lower()
+            if source in self.blocked:
+                continue
+            try:
+                jobs = execute_fn(cfg) or []
+                all_jobs.extend(jobs)
+                self.jobs_per_source[source] = len(jobs)
+            except BlockSignal as bs:
+                self._block(source, bs.reason, self.jobs_per_source.get(source, 0))
+            except Exception as e:
+                self._block(source, f"{type(e).__name__}: {str(e)[:80]}", self.jobs_per_source.get(source, 0))
+
+        report = {
+            "blocked_sources": list(self.blocked),
+            "switch_events": self.switch_events,
+            "jobs_per_source": self.jobs_per_source,
+            "total_jobs": len(all_jobs),
+        }
+        return report, all_jobs
+
+    def _block(self, source: str, reason: str, jobs_so_far: int):
+        self.blocked.add(source)
+        self.jobs_per_source[source] = jobs_so_far
+        self.switch_events.append({"source": source, "reason": reason, "jobs_before": jobs_so_far})
+        logger.warning(
+            f"🚫 [{source}] BỊ CHẶN: {reason} | "
+            f"Jobs trước khi block: {jobs_so_far} | Chuyển sang crawler tiếp theo..."
+        )
+
+
+def _format_failover_msg(report: dict) -> str:
+    if not report["blocked_sources"]:
+        return ""
+    blocked = report["blocked_sources"]
+    total = len(report["jobs_per_source"])
+    lines = [
+        f"\n⚠️ *Failover:* {len(blocked)}/{total} nguồn bị chặn",
+        f"🚫 Bị chặn: {', '.join(blocked)}",
+    ]
+    for ev in report["switch_events"]:
+        lines.append(f"   • [{ev['source']}] {ev['reason']}")
+    return "\n".join(lines)
+
 # Đọc cấu hình từ .env hoặc lấy giá trị mặc định
-HEADLESS = os.getenv("HEADLESS", "True").lower() in ("true", "1", "yes", "t")
+HEADLESS = os.getenv("HEADLESS", "False").lower() in ("true", "1", "yes", "t")
 PAGES = int(os.getenv("CRAWL_PAGES", "2"))
 SCHEDULE_TIME = os.getenv("CRAWL_SCHEDULE_TIME", "00:00")
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "")
@@ -58,9 +152,9 @@ def load_source_config(source_name: str) -> dict:
             "max_groups_per_session": 3,
             "max_days_old": 3,
         },
-        "topcv": {"enabled": True, "max_pages": PAGES, "headless": True},
-        "itviec": {"enabled": True, "max_pages": 1, "headless": True},
-        "vietnamworks": {"enabled": True, "max_pages": PAGES, "headless": True},
+        "topcv": {"enabled": True, "max_pages": 1, "max_jobs": 10, "headless": False},
+        "itviec": {"enabled": True, "max_pages": 1, "max_jobs": 10, "headless": False},
+        "vietnamworks": {"enabled": True, "max_pages": 1, "max_jobs": 10, "headless": False},
     }
 
     try:
@@ -94,10 +188,44 @@ def send_telegram_notification(text: str):
         logger.error(f"❌ Exception khi gửi Telegram: {e}")
 
 
-def run_pipeline(target_bot=None):
+def jobs_to_records(jobs: list) -> list[dict]:
+    records = []
+    for job in jobs:
+        if hasattr(job, "to_dict"):
+            records.append(job.to_dict())
+        elif hasattr(job, "dict"):
+            records.append(job.dict())
+        elif hasattr(job, "model_dump"):
+            records.append(job.model_dump())
+        else:
+            records.append(vars(job))
+    return records
+
+
+def geocode_and_save_jobs(jobs: list, source_name: str) -> dict:
+    """Luu du lieu theo flow test: JobModel -> dict -> geocode -> DB."""
+    if not jobs:
+        return {"inserted": 0, "skipped": 0, "errors": 0, "total": 0}
+
+    records = jobs_to_records(jobs)
+    logger.info(f"   Geocoding {len(records)} jobs ({source_name})...")
+    df = pd.DataFrame(records)
+    df = geocoder.geocode_dataframe(df)
+    records_with_geo = df.to_dict("records")
+
+    with DBHandler() as db:
+        stats = db.insert_jobs(records_with_geo)
+        stats["total"] = len(records_with_geo)
+        logger.info(
+            f"   DB {source_name}: inserted={stats['inserted']} | skipped={stats['skipped']} | errors={stats['errors']}"
+        )
+        return stats
+
+
+def run_pipeline(target_bot=None, force_headless=False):
     logger.info("=" * 55)
     logger.info(
-        f"🤖 FULL PIPELINE: CRAWL → NLP → GEO → DB | Target: {target_bot or 'ALL'}"
+        f"🤖 FULL PIPELINE: CRAWL → NLP → GEO → DB | Target: {target_bot or 'ALL'} | Force Headless: {force_headless}"
     )
     logger.info("=" * 55)
 
@@ -116,7 +244,10 @@ def run_pipeline(target_bot=None):
         try:
             from crawler.facebook_crawler import FacebookCrawler
 
-            crawler = FacebookCrawler()
+            crawler = FacebookCrawler(
+                max_posts_per_group=facebook_config.get("max_posts_per_group", 5),
+                max_groups_per_session=facebook_config.get("max_groups_per_session", 3),
+            )
 
             def fb_progress_cb(current_group, total_groups, current_count):
                 db_handler.update_task_progress(
@@ -155,7 +286,7 @@ def run_pipeline(target_bot=None):
 
     all_jobs = []
 
-    # ── 1. CRAWL ──────────────────────────────────────────
+    # ── 1. CRAWL với Failover tự động ─────────────────────
     active_crawlers = CRAWLERS
     if target_bot:
         active_crawlers = [
@@ -167,59 +298,90 @@ def run_pipeline(target_bot=None):
         db_handler.close()
         return
 
-    for cfg in active_crawlers:
+    manager = FailoverManager(active_crawlers)
+
+    def execute_crawler(cfg: dict) -> list:
+        """Chạy một crawler, tích hợp BlockDetector để phát hiện bị chặn."""
         source_name = cfg["name"].lower()
-        logger.info(f"\n🌐 Crawl: {cfg['name']}")
         source_config = load_source_config(source_name)
+
         if source_config.get("enabled", True) is False:
             logger.info(f"   ⏭️  Bỏ qua {cfg['name']} vì đã bị tắt trong cấu hình riêng")
-            continue
+            return []
 
-        # Lấy max_pages cấu hình động từ database (nếu có), mặc định sử dụng cấu hình từ env (cfg["pages"])
         max_pages = db_handler.get_task_max_pages(
             source_name, default_val=source_config.get("max_pages", cfg["pages"])
         )
         logger.info(f"   ⚙️ Configured max_pages: {max_pages}")
+        db_handler.update_task_progress(source_name, "running", 0, 0, max_pages=max_pages)
 
-        db_handler.update_task_progress(
-            source_name, "running", 0, 0, max_pages=max_pages
+        max_jobs = source_config.get("max_jobs", 10)
+        logger.info(f"   ⚙️ Configured max_jobs: {max_jobs}")
+
+        detector = BlockDetector()
+
+        def make_progress_cb(src_name):
+            def cb(current_page, total_pages, current_count):
+                # Kiểm tra dấu hiệu bị chặn qua số job trên mỗi trang
+                detector.check_empty_results(current_count, src_name)
+                db_handler.update_task_progress(
+                    src_name, "running", current_count, current_page, max_pages=total_pages,
+                )
+            return cb
+
+        # Ép chạy ẩn danh nếu được yêu cầu từ tiến trình nền của Server
+        headless_val = True if force_headless else source_config.get("headless", HEADLESS)
+        logger.info(f"   ⚙️ Run mode headless: {headless_val}")
+
+        crawler_obj = cfg["class"](
+            max_pages=max_pages,
+            headless=headless_val,
+            max_jobs=max_jobs,
         )
+
         try:
-            max_jobs = source_config.get("max_jobs", 10)
-            logger.info(f"   ⚙️ Configured max_jobs: {max_jobs}")
-            crawler = cfg["class"](
-                max_pages=max_pages,
-                headless=source_config.get("headless", HEADLESS),
-                max_jobs=max_jobs,
-            )
-
-            def make_progress_cb(src_name):
-                def cb(current_page, total_pages, current_count):
-                    db_handler.update_task_progress(
-                        src_name,
-                        "running",
-                        current_count,
-                        current_page,
-                        max_pages=total_pages,
-                    )
-
-                return cb
-
-            jobs = crawler.crawl(progress_callback=make_progress_cb(source_name))
-            all_jobs.extend(jobs)
-            logger.info(f"   ✅ {len(jobs)} jobs")
-            db_handler.update_task_progress(
-                source_name, "completed", len(jobs), max_pages
-            )
+            jobs = crawler_obj.crawl(progress_callback=make_progress_cb(source_name))
+        except BlockSignal:
+            raise  # FailoverManager sẽ xử lý
         except Exception as e:
-            logger.error(f"   ❌ Lỗi: {e}")
-            db_handler.update_task_progress(
-                source_name, "error", 0, 0, total_errors=1, error_log=str(e)
-            )
+            err_msg = str(e)
+            # Timeout liên tiếp → coi là bị chặn
+            if any(t in err_msg for t in ("Timeout", "timeout", "ERR_TIMED_OUT", "Navigation timeout")):
+                detector.check_timeout_streak(source_name)
+            raise  # FailoverManager treat as block
+
+        stats = geocode_and_save_jobs(jobs, source_name)
+        db_handler.update_task_progress(
+            source_name, "completed",
+            stats.get("inserted", 0), len(jobs),
+            total_errors=stats.get("errors", 0), max_pages=max_pages,
+        )
+        return jobs
+
+    # Chạy tất cả crawlers — tự động failover khi bị chặn
+    report, all_jobs = manager.run(execute_crawler)
+
+    # Cập nhật DB status "failed" cho các source bị chặn để tránh vi phạm CHECK constraint CHK_task_status
+    for blocked_src in report["blocked_sources"]:
+        try:
+            db_handler.update_task_progress(blocked_src, "failed", 0, 0, total_errors=1, error_log="Blocked by anti-bot detection")
+        except Exception:
+            pass
 
     db_handler.close()
 
     logger.info(f"\n📦 Raw: {len(all_jobs)} jobs")
+
+    # Gửi thông báo Telegram nếu có failover
+    failover_msg = _format_failover_msg(report)
+    if failover_msg:
+        send_telegram_notification(
+            f"🤖 *Crawler Pipeline ({target_bot or 'ALL'})*\n"
+            f"📦 Tổng jobs: {report['total_jobs']}"
+            + failover_msg
+        )
+
+    return
 
     # Nếu không có job nào thì dừng
     if not all_jobs:

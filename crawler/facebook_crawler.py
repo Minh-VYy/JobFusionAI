@@ -103,8 +103,10 @@ ARTICLE_SELECTORS = [
 ]
 CONTENT_SELECTORS = [
     "div[data-ad-comet-preview='message']",
-    "div[dir='auto']",
+    "div[data-ad-rendering-role='story_message']",
     "div[data-ad-preview='message']",
+    "div[data-ad-comet-preview='message'] span",
+    "div[dir='auto']",
     "div[role='article'] div[dir='auto']",
 ]
 LINK_SELECTORS = [
@@ -626,7 +628,7 @@ class FacebookCrawler:
         self._auto_launch_chrome()
         with sync_playwright() as pw:
             try:
-                browser = pw.chromium.connect_over_cdp("http://localhost:9222")
+                browser = pw.chromium.connect_over_cdp("http://localhost:9222", timeout=10000)
                 logger.info("✅ Connected to existing Chrome session")
             except Exception as e:
                 logger.error(f"❌ Cannot connect to Chrome: {e}")
@@ -822,7 +824,23 @@ class FacebookCrawler:
             except Exception as e:
                 logger.debug(f"   Parse error article #{i}: {e}")
 
+        if count > 0 and not posts:
+            self._save_empty_articles_debug(page)
+
         return posts
+
+    def _save_empty_articles_debug(self, page: Page):
+        """Luu lai trang khi Facebook co article nhung khong doc duoc text."""
+        try:
+            os.makedirs("logs", exist_ok=True)
+            page.screenshot(path="logs/error_empty_articles.png", full_page=True)
+            with open("logs/error_empty_articles.html", "w", encoding="utf-8") as f:
+                f.write(page.content())
+            logger.warning(
+                "Da luu debug empty articles: logs/error_empty_articles.png va logs/error_empty_articles.html"
+            )
+        except Exception as e:
+            logger.debug(f"Could not save empty articles debug files: {e}")
 
     def _expand_see_more_article(self, article) -> int:
         """
@@ -883,7 +901,11 @@ class FacebookCrawler:
             try:
                 el = article.locator(sel).first
                 if el.count() > 0:
-                    t = el.inner_text(timeout=1500).strip()
+                    t = (
+                        el.inner_text(timeout=1500)
+                        or el.text_content(timeout=1500)
+                        or ""
+                    ).strip()
                     if t and len(t) > len(content):
                         content = t
             except Exception:
@@ -893,13 +915,22 @@ class FacebookCrawler:
         if len(content) < 15:
             try:
                 full_text = article.evaluate("""el => {
-                    const divs = el.querySelectorAll("div[dir='auto']");
-                    let best = '';
-                    for (const d of divs) {
-                        const t = (d.innerText || '').trim();
-                        if (t.length > best.length) best = t;
+                    const selectors = [
+                        "[data-ad-comet-preview='message']",
+                        "[data-ad-rendering-role='story_message']",
+                        "[data-ad-preview='message']",
+                        "div[dir='auto']",
+                        "span[dir='auto']"
+                    ];
+                    const texts = [];
+                    for (const selector of selectors) {
+                        for (const node of el.querySelectorAll(selector)) {
+                            const text = (node.innerText || node.textContent || node.getAttribute('aria-label') || '').trim();
+                            if (text) texts.push(text);
+                        }
                     }
-                    return best;
+                    texts.push((el.innerText || el.textContent || '').trim());
+                    return texts.sort((a, b) => b.length - a.length)[0] || '';
                 }""")
                 if full_text and len(full_text.strip()) > len(content):
                     content = full_text.strip()
@@ -917,7 +948,11 @@ class FacebookCrawler:
                     texts = []
                     for i in range(min(els.count(), 15)):
                         try:
-                            t = els.nth(i).inner_text(timeout=1000).strip()
+                            t = (
+                                els.nth(i).inner_text(timeout=1000)
+                                or els.nth(i).text_content(timeout=1000)
+                                or ""
+                            ).strip()
                             if t:
                                 texts.append(t)
                         except Exception:
@@ -932,7 +967,11 @@ class FacebookCrawler:
         # ── Ưu tiên 4: Cứu cánh cuối cùng - Lấy toàn bộ Text của Article ──
         if len(content) < 15:
             try:
-                raw_all_text = article.inner_text(timeout=2000).strip()
+                raw_all_text = (
+                    article.inner_text(timeout=2000)
+                    or article.text_content(timeout=2000)
+                    or ""
+                ).strip()
                 if len(raw_all_text) > len(content):
                     content = raw_all_text
                     logger.debug(
@@ -1133,8 +1172,19 @@ class FacebookCrawler:
             except Exception as e:
                 logger.warning(f"   goto attempt {attempt}/{retries} failed: {e}")
                 if attempt < retries:
+                    self._refresh_page_if_stuck(page, str(e))
                     time.sleep(5 * attempt)
         return False
+
+    def _refresh_page_if_stuck(self, page: Page, reason: str = ""):
+        """Reload Facebook tab khi navigation timeout hoac page co dau hieu bi dung."""
+        try:
+            if page and not page.is_closed():
+                logger.warning(f"   Refresh Facebook page do trang bi dung: {reason}")
+                page.reload(wait_until="domcontentloaded", timeout=15000)
+                self._human_delay(1.0, 2.0)
+        except Exception as e:
+            logger.warning(f"   Khong the refresh Facebook page: {e}")
 
     def _human_scroll(self, page: Page, max_scrolls: int = 10):
         """Scroll chậm giả lập người thật với mouse movement."""

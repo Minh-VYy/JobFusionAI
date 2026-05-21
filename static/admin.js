@@ -127,7 +127,7 @@ async function fetchTasks() {
                     </div>
                 </td>
                 <td>
-                    <button class="btn-approve" style="padding: 4px 8px; font-size: 12px; border: none; border-radius: 4px; cursor: pointer;" onclick="runBotNow(${t.id}, '${t.name}')" ${t.status === 'running' ? 'disabled' : ''}>▶ Run</button>
+                    <button class="btn-approve" style="padding: 4px 8px; font-size: 12px; border: none; border-radius: 4px; cursor: pointer;" onclick="runBotNow(${t.id}, '${t.name}', this)" ${t.status === 'running' ? 'disabled' : ''}>▶ Run</button>
                 </td>
             </tr>
             `;
@@ -170,7 +170,8 @@ async function fetchTasks() {
     }
 }
 
-async function runBotNow(taskId, botName) {
+async function runBotNow(taskId, botName, btnElement) {
+    let btn = btnElement;
     // Xác định ID nút và API endpoint phù hợp
     let btnId = `btn-${taskId}`;
     let apiPath = `/admin/tasks/${taskId}/run`;
@@ -189,7 +190,9 @@ async function runBotNow(taskId, botName) {
             else if (taskId === 'vietnamworks') name = 'VietnamWorks';
     }
 
-    const btn = document.getElementById(btnId);
+    if (!btn) {
+        btn = document.getElementById(btnId);
+    }
     if (btn) btn.classList.add('loading');
 
     toast(`Đang khởi động bot ${name}...`, 'info');
@@ -248,7 +251,7 @@ function filterJobs() {
     const filtered = jobsData.filter(j => {
         const matchQuery = (j.title || '').toLowerCase().includes(query) || (j.company || '').toLowerCase().includes(query);
         const matchSource = source ? (j.source_name === source) : true;
-        const matchStatus = status ? (j.status === status) : true;
+        const matchStatus = (status && status !== 'all') ? (j.status === status) : true;
         return matchQuery && matchSource && matchStatus;
     });
 
@@ -389,12 +392,13 @@ async function reviewJob(action) {
             console.warn("API chưa có, mock success");
         }
 
-        // Mock UI Update
+        // UI Update
         const idx = jobsData.findIndex(j => j.id === jobId);
         if (idx !== -1) {
-            jobsData[idx].status = payload.status;
+            const nextStatus = action === 'approve' ? 'approved' : 'rejected';
+            jobsData[idx].status = nextStatus;
             // Update UI list internally
-            if (payload.status === 'approved') {
+            if (nextStatus === 'approved') {
                 jobsData[idx].title = payload.title_corrected;
                 jobsData[idx].address_clean = payload.location_corrected;
             }

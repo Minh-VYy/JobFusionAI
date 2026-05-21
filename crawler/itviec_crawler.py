@@ -69,7 +69,7 @@ class ITviecCrawler(BaseCrawler):
                         detail_url = ""
 
                         # 2. Click vào card để load data bên panel phải
-                        card.click()
+                        card.click(force=True)
                         self.human_sleep(2, 3)
 
                         # 3. Scroll panel phải để đảm bảo load hết thông tin
